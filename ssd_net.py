@@ -75,4 +75,3 @@ class SSD (chainer.Chain):
             self.accuracy = self.loss
             self.img = (x, h)
             return self.loss
-
