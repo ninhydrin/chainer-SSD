@@ -47,18 +47,26 @@ def nms(bboxes, scores, score_th, nms_th, top_k):
 def IoU(a, b):
     U = union(a, b)
     I = intersection(a, b)
+    if not I:
+        return 0
+    a_ = (a[2]-a[0])*(a[3]-a[1])
+    b_ = (b[2]-b[0])*(b[3]-b[1])
+    i = (I[2]-I[0])*(I[3]-I[1])
+    return a_ + b_ - i*2
 
 def union(a,b):
-  x = min(a[0], b[0])
-  y = min(a[1], b[1])
+  x1 = min(a[0], b[0])
+  y1 = min(a[1], b[1])
   w = max(a[0]+a[2], b[0]+b[2]) - x
   h = max(a[1]+a[3], b[1]+b[3]) - y
   return (x, y, w, h)
 
 def intersection(a,b):
-  x = max(a[0], b[0])
-  y = max(a[1], b[1])
-  w = min(a[0]+a[2], b[0]+b[2]) - x
-  h = min(a[1]+a[3], b[1]+b[3]) - y
+  x1 = max(a[0], b[0])
+  y1 = max(a[1], b[1])
+  x2 = min(a[2], b[2])
+  y1 = min(a[1], b[1])
+  w = x2 - x1
+  h = y2 - y1
   if w<0 or h<0: return () # or (0,0,0,0) ?
   return (x, y, w, h)

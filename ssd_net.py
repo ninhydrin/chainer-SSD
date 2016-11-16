@@ -60,8 +60,10 @@ class SSD (chainer.Chain):
 
         )
         self.train = False
+        self.conv4_3_norm_priorbox = self.prior((38, 38), 30., 0, [2], 1, 1,(0.1, 0.1, 0.2, 0.2))
 
     def __call__(self, x, t):
+
         h = F.relu(self.conv1_1(x))
         h = F.max_pooling_2d(F.relu(self.conv1_2(h)),2,2)
         h = F.relu(self.conv2_1(h))
@@ -151,57 +153,41 @@ class SSD (chainer.Chain):
 
         #TODO バッチサイズの考慮
         self.mbox_loc = F.concat([self.h_conv4_3_norm_mbox_loc_flat,
-                                 self.h_fc7_mbox_loc_flat,
-                                 self.h_conv6_2_mbox_loc_flat,
-                                 self.h_conv7_2_mbox_loc_flat,
-                                 self.h_conv8_2_mbox_loc_flat,
-                                 self.h_pool6_mbox_loc_flat],axis=0)
+                                  self.h_fc7_mbox_loc_flat,
+                                  self.h_conv6_2_mbox_loc_flat,
+                                  self.h_conv7_2_mbox_loc_flat,
+                                  self.h_conv8_2_mbox_loc_flat,
+                                  self.h_pool6_mbox_loc_flat],axis=0)
 
         self.mbox_conf = F.concat([self.h_conv4_3_norm_mbox_conf_flat,
-                                 self.h_fc7_mbox_conf_flat,
-                                 self.h_conv6_2_mbox_conf_flat,
-                                 self.h_conv7_2_mbox_conf_flat,
-                                 self.h_conv8_2_mbox_conf_flat,
+                                   self.h_fc7_mbox_conf_flat,
+                                   self.h_conv6_2_mbox_conf_flat,
+                                   self.h_conv7_2_mbox_conf_flat,
+                                   self.h_conv8_2_mbox_conf_flat,
                                    self.h_pool6_mbox_conf_flat],axis=0)
 
         self.mbox_reahpe = F.reshape(self.mbox_conf,(1,7308,21))
-
+        self.mbox_reahpe_softmax = F.softmax(self.mbox_reahpe)
         self.loss = self.loss_func(h, t)
         self.accuracy = self.loss
         return self.loss
 
-def prior(h, min_size,max_size,aspect,flip,clip,variance):
-    aspect_ratio = [1.]
-    for i in aspect:
-        aspect_ratio.append(i)
-        aspect_ratio.append(1/i)
-    b, ch, height, width = h.shape
-    img_width = img_height = 300.
-    step_x = img_width / float(width)
-    step_y = img_width / float(height)
-    top_data=[0]*(38*38)*12
-    idx=0
-    print(step_x,step_y)
-    for h in range(height):
-        for w in range(width):
-            center_x = (w + 0.5) * step_x
-            center_y = (h + 0.5) * step_y
-            box_width = box_height = min_size
-            top_data[idx] = (center_x - box_width / 2.) / img_width
-            idx+=1
-            top_data[idx] = (center_y - box_height / 2.) / img_height
-            idx+=1
-            top_data[idx] = (center_x + box_width / 2.) / img_width
-            idx+=1
-            top_data[idx] = (center_y + box_height / 2.) / img_height
-            idx+=1
-            if h==1 and w ==1:
-                print(h,w)
-                print("top", top_data[idx-4],top_data[idx-3],top_data[idx-2],top_data[idx-1])
-                print(center_x, center_y)
-            if max_size > 0:
-                #second prior: aspect_ratio = 1, size = sqrt(min_size * max_size)
-                box_width = box_height = np.sqrt(min_size * max_size)
+    def prior(self, h, min_size, max_size,aspect, flip, clip, variance):
+        aspect_ratio = [1.]
+        for i in aspect:
+            aspect_ratio.append(i)
+            aspect_ratio.append(1/i)
+        height, width = h
+        img_width = img_height = 300.
+        step_x = img_width / float(width)
+        step_y = img_width / float(height)
+        top_data=np.zeros(height * width * len(aspect_ratio) * 4)
+        idx=0
+        for h in range(height):
+            for w in range(width):
+                center_x = (w + 0.5) * step_x
+                center_y = (h + 0.5) * step_y
+                box_width = box_height = min_size
                 top_data[idx] = (center_x - box_width / 2.) / img_width
                 idx+=1
                 top_data[idx] = (center_y - box_height / 2.) / img_height
@@ -210,48 +196,65 @@ def prior(h, min_size,max_size,aspect,flip,clip,variance):
                 idx+=1
                 top_data[idx] = (center_y + box_height / 2.) / img_height
                 idx+=1
-            for ar in aspect_ratio:
-                if abs(ar - 1.) < 1e-6:
-                    continue
-                box_width = min_size * np.sqrt(ar)
-                box_height = min_size / np.sqrt(ar)
+                if max_size > 0:
+                    #second prior: aspect_ratio = 1, size = sqrt(min_size * max_size)
+                    box_width = box_height = np.sqrt(min_size * max_size)
+                    top_data[idx] = (center_x - box_width / 2.) / img_width
+                    idx+=1
+                    top_data[idx] = (center_y - box_height / 2.) / img_height
+                    idx+=1
+                    top_data[idx] = (center_x + box_width / 2.) / img_width
+                    idx+=1
+                    top_data[idx] = (center_y + box_height / 2.) / img_height
+                    idx+=1
+                for ar in aspect_ratio:
+                    if abs(ar - 1.) < 1e-6:
+                        continue
+                    box_width = min_size * np.sqrt(ar)
+                    box_height = min_size / np.sqrt(ar)
 
-                top_data[idx] = (center_x - box_width / 2.) / img_width
-                idx+=1
-                top_data[idx] = (center_y - box_height / 2.) / img_height
-                idx+=1
-                top_data[idx] = (center_x + box_width / 2.) / img_width
-                idx+=1
-                top_data[idx] = (center_y + box_height / 2.) / img_height
-                idx+=1
+                    top_data[idx] = (center_x - box_width / 2.) / img_width
+                    idx+=1
+                    top_data[idx] = (center_y - box_height / 2.) / img_height
+                    idx+=1
+                    top_data[idx] = (center_x + box_width / 2.) / img_width
+                    idx+=1
+                    top_data[idx] = (center_y + box_height / 2.) / img_height
+                    idx+=1
 
-    if clip:
-        for i in range(len(top_data)):
-            if top_data[i] > 1:
-                top_data[i] = 1
-            elif top_data[i] < 0:
-                top_data[i] = 0
+        if clip:
+            for i in range(len(top_data)):
+                if top_data[i] > 1:
+                    top_data[i] = 1
+                elif top_data[i] < 0:
+                    top_data[i] = 0
+        val_data=np.zeros(height * width * len(aspect_ratio) * 4)
+        if len(variance)==1:
+            pass
+        else:
+            count = 0
+            for h in range(height):
+                for w in range(width):
+                    for ar in range(len(aspect_ratio)):
+                        for v in variance:
+                            val_data[count] = v
+                            count+=1
+        return np.vstack([top_data, val_data])
 
-    if len(variance)==1:
-        pass
-    else:
-        pass
-    return top_data
-
-def decoder(prior, loc, prior_data):
-    bbox_data = np.array([0]*4,dtype=np.float32)
-    p_xmin, p_ymin, p_xmax, p_ymax= prior
-    xmin, ymin, xmax, ymax= loc
-    prior_width = p_xmax - p_xmin
-    prior_height = p_ymax - p_ymin
-    prior_center_x = (p_xmin + p_xmax) / 2.
-    prior_center_y = (p_ymin + p_ymax) / 2.
-    decode_bbox_center_x = prior_data[0] * xmin * prior_width + prior_center_x;
-    decode_bbox_center_y = prior_data[1] * ymin * prior_height + prior_center_y;
-    decode_bbox_width = np.exp(prior_data[2] * xmax) * prior_width;
-    decode_bbox_height = np.exp(prior_data[3] * ymax) * prior_height;
-    bbox_data[0] = decode_bbox_center_x - decode_bbox_width / 2.
-    bbox_data[1] = decode_bbox_center_y - decode_bbox_height / 2.;
-    bbox_data[2] = decode_bbox_center_x + decode_bbox_width / 2.;
-    bbox_data[3] = decode_bbox_center_y + decode_bbox_height / 2.;
-    return bbox_data
+    def decoder(prior, loc, prior_data):
+        bbox_data = np.array([0]*4,dtype=np.float32)
+        p_xmin, p_ymin, p_xmax, p_ymax= prior
+        xmin, ymin, xmax, ymax= loc
+        prior_width = p_xmax - p_xmin
+        prior_height = p_ymax - p_ymin
+        prior_center_x = (p_xmin + p_xmax) / 2.
+        prior_center_y = (p_ymin + p_ymax) / 2.
+        decode_bbox_center_x = prior_data[0] * xmin * prior_width + prior_center_x;
+        decode_bbox_center_y = prior_data[1] * ymin * prior_height + prior_center_y;
+        decode_bbox_width = np.exp(prior_data[2] * xmax) * prior_width;
+        decode_bbox_height = np.exp(prior_data[3] * ymax) * prior_height;
+        bbox_data[0] = decode_bbox_center_x - decode_bbox_width / 2.
+        bbox_data[1] = decode_bbox_center_y - decode_bbox_height / 2.;
+        bbox_data[2] = decode_bbox_center_x + decode_bbox_width / 2.;
+        bbox_data[3] = decode_bbox_center_y + decode_bbox_height / 2.;
+        return bbox_data
