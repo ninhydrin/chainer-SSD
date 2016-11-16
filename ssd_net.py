@@ -265,13 +265,13 @@ class SSD (chainer.Chain):
         cand = []
         for label in range(1,21):
             l = conf[:,label].argsort()
-            label_cand = np.array([np.hstack([conf[i, label] ,self.decoder(prior[0, i], loc[i], prior[1, i])]) for i in l if conf[i,label] > 0.1])
+            label_cand = np.array([np.hstack([label, conf[i, label] ,self.decoder(prior[0, i], loc[i], prior[1, i])]) for i in l if conf[i,label] > 0.1])
             if label_cand.any():
-                k = self.nms(label_cand[:,1:], label_cand[:,0], 0.1, 0.45, 200)
+                k = self.nms(label_cand[:,2:], label_cand[:,1], 0.1, 0.45, 200)
                 for i in k:
                     cand.append(label_cand[i])
         cand = np.array(cand)
-        cand = cand[np.where(cand[:,0]>=0.6)]
+        cand = cand[np.where(cand[:,1]>=0.6)]
         return cand
 
     def decoder(self, prior, loc, prior_data):
@@ -302,12 +302,10 @@ class SSD (chainer.Chain):
             cand_bbox=bboxes[idx]
             if cand_bbox[0] == cand_bbox[2] or cand_bbox[1] == cand_bbox[3]:
                 keep=False
-            print(idx)
             for i in range(len(indices)):
                 if keep:
                     kept_idx = indices[i]
                     overlap = self.IoU(bboxes[idx], bboxes[kept_idx])
-                    print("over = ",overlap)
                     keep = overlap <= nms_th
                 else:
                     break
@@ -322,7 +320,6 @@ class SSD (chainer.Chain):
             return 0
         a_ = (a[2]-a[0])*(a[3]-a[1])
         b_ = (b[2]-b[0])*(b[3]-b[1])
-        print(a_, b_)
         if a_ <=0 or b_ <= 0:
             return 1
         i = (I[2]-I[0])*(I[3]-I[1])
