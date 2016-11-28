@@ -258,7 +258,7 @@ class SSD (chainer.Chain):
                             count+=1
         return np.vstack([top_data, val_data])
 
-    def detection(self):
+    def detection(self, nms_th=0.45, cls_th=0.6):
         prior = np.reshape(self.mbox_prior,(2, 7308, 4))
         loc = np.reshape(self.mbox_loc.data, (7308, 4))
         conf = self.mbox_conf_softmax.data
@@ -267,11 +267,11 @@ class SSD (chainer.Chain):
             l = conf[:,label].argsort()
             label_cand = np.array([np.hstack([label, conf[i, label] ,self.decoder(prior[0, i], loc[i], prior[1, i])]) for i in l if conf[i,label] > 0.1])
             if label_cand.any():
-                k = self.nms(label_cand[:,2:], label_cand[:,1], 0.1, 0.45, 200)
+                k = self.nms(label_cand[:,2:], label_cand[:,1], 0.1, nms_th, 200)
                 for i in k:
                     cand.append(label_cand[i])
         cand = np.array(cand)
-        cand = cand[np.where(cand[:,1]>=0.6)]
+        cand = cand[np.where(cand[:,1]>=cls_th)]
         return cand
 
     def decoder(self, prior, loc, prior_data):
@@ -291,6 +291,23 @@ class SSD (chainer.Chain):
         bbox_data[2] = decode_bbox_center_x + decode_bbox_width / 2.
         bbox_data[3] = decode_bbox_center_y + decode_bbox_height / 2.
         return bbox_data
+
+    def encoder(self, prior_bbox, bbox, prior_variance):
+        encode_bbox = np.array([0]*4,dtype=np.float32)
+        prior_width = prior_bbox[2] - prior_bbox[0]
+        prior_height = prior_bbox[3] - prior_bbox[1]
+        prior_center_x = (prior_bbox[0] + prior_bbox[2]) / 2.
+        prior_center_y = (prior_bbox[1] + prior_bbox[3]) / 2.
+        bbox_width = bbox[2] - bbox[0]
+        bbox_height = bbox[3] - bbox[1]
+        bbox_center_x = (bbox[0] + bbox[2]) / 2.
+        bbox_center_y = (bbox[1] + bbox[3]) / 2.
+        encode_bbox[0] = (bbox_center_x - prior_center_x) / prior_width / prior_variance[0]
+        encode_bbox[1] = (bbox_center_y - prior_center_y) / prior_height / prior_variance[1]
+        encode_bbox[2] = np.log(bbox_width / prior_width) / prior_variance[2]
+        encode_bbox[3] = np.log(bbox_height / prior_height) / prior_variance[3]
+
+        return encode_bbox
 
     def nms(self, bboxes, scores, score_th, nms_th, top_k):
         score_iter = 0
@@ -332,5 +349,5 @@ class SSD (chainer.Chain):
         y2 = min(a[3], b[3])
         w = x2 - x1
         h = y2 - y1
-        if w<0 or h<0: return () # or (0,0,0,0) ?
+        if w<0 or h<0: return ()
         return (x1, y1, x2, y2)
