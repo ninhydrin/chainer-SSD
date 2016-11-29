@@ -6,6 +6,12 @@ import numpy as np
 
 class SSD (chainer.Chain):
     insize = 300
+
+    def set_info(self, name, h, w, d_num):
+        setattr(self, name + "_h", h)
+        setattr(self, name + "_w", w)
+        setattr(self, name + "_d", d_num)
+
     def __init__(self):
         super(SSD, self).__init__(
             conv1_1 =  L.Convolution2D(3,  64, 3, pad=1),
@@ -24,7 +30,6 @@ class SSD (chainer.Chain):
             conv5_2= L.Convolution2D(512, 512,  3, pad=1),
             conv5_3= L.Convolution2D(512, 512,  3, pad=1),
 
-            #fc6 = L.Convolution2D(512, 1024,  3, pad=6),
             fc6 = L.DilatedConvolution2D(512, 1024,  3, pad=6,dilate=6),
             fc7 = L.Convolution2D(1024, 1024,  1),
 
@@ -60,23 +65,28 @@ class SSD (chainer.Chain):
 
         )
         self.train = False
+        self.set_info("c4", 38, 38, 3)
+        self.set_info("f7", 19, 19, 6)
+        self.set_info("c6", 10, 10, 6)
+        self.set_info("c7", 5, 5, 6)
+        self.set_info("c8", 3, 3, 6)
+        self.set_info("p6", 1, 1, 6)
+
         self.conv4_3_norm_mbox_priorbox = self.prior((38, 38), 30., 0, [2], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.fc7_mbox_priorbox = self.prior((19, 19), 60., 114., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.conv6_2_mbox_priorbox = self.prior((10, 10), 114., 168., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.conv7_2_mbox_priorbox = self.prior((5, 5),168., 222., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.conv8_2_mbox_priorbox = self.prior((3, 3), 222., 276., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.pool6_mbox_priorbox = self.prior((1, 1), 276., 330., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+
+        """
         self.mbox_prior = np.hstack([self.conv4_3_norm_mbox_priorbox,
                                      self.fc7_mbox_priorbox,
                                      self.conv6_2_mbox_priorbox,
                                      self.conv7_2_mbox_priorbox,
                                      self.conv8_2_mbox_priorbox,
                                      self.pool6_mbox_priorbox])
-
-
-
-
-
+        """
 
     def __call__(self, x, t):
 
@@ -129,45 +139,45 @@ class SSD (chainer.Chain):
         self.h_conv4_3_norm_mbox_conf = self.conv4_3_norm_mbox_conf(self.h_conv4_3_norm)
         self.h_conv4_3_norm_mbox_loc_perm = F.transpose(self.h_conv4_3_norm_mbox_loc,(0,2,3,1))
         self.h_conv4_3_norm_mbox_conf_perm = F.transpose(self.h_conv4_3_norm_mbox_conf,(0,2,3,1))
-        self.h_conv4_3_norm_mbox_loc_flat = F.flatten(self.h_conv4_3_norm_mbox_loc_perm)
-        self.h_conv4_3_norm_mbox_conf_flat = F.flatten(self.h_conv4_3_norm_mbox_conf_perm)
+
+        self.h_conv4_3_norm_mbox_loc_flat = F.reshape(self.h_conv4_3_norm_mbox_loc_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 4))
+        self.h_conv4_3_norm_mbox_conf_flat = F.reshape(self.h_conv4_3_norm_mbox_conf_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 21))
 
         self.h_fc7_mbox_loc = self.fc7_mbox_loc(self.h_fc7)
         self.h_fc7_mbox_conf = self.fc7_mbox_conf(self.h_fc7)
         self.h_fc7_mbox_loc_perm = F.transpose(self.h_fc7_mbox_loc,(0,2,3,1))
         self.h_fc7_mbox_conf_perm = F.transpose(self.h_fc7_mbox_conf,(0,2,3,1))
-        self.h_fc7_mbox_loc_flat = F.flatten(self.h_fc7_mbox_loc_perm)
-        self.h_fc7_mbox_conf_flat = F.flatten(self.h_fc7_mbox_conf_perm)
+        self.h_fc7_mbox_loc_flat = F.reshape(self.h_fc7_mbox_loc_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 4))
+        self.h_fc7_mbox_conf_flat = F.reshape(self.h_fc7_mbox_conf_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 21))
 
         self.h_conv6_2_mbox_loc = self.conv6_2_mbox_loc(self.h_conv6_2)
         self.h_conv6_2_mbox_conf = self.conv6_2_mbox_conf(self.h_conv6_2)
         self.h_conv6_2_mbox_loc_perm = F.transpose(self.h_conv6_2_mbox_loc,(0,2,3,1))
         self.h_conv6_2_mbox_conf_perm = F.transpose(self.h_conv6_2_mbox_conf,(0,2,3,1))
-        self.h_conv6_2_mbox_loc_flat = F.flatten(self.h_conv6_2_mbox_loc_perm)
-        self.h_conv6_2_mbox_conf_flat = F.flatten(self.h_conv6_2_mbox_conf_perm)
+        self.h_conv6_2_mbox_loc_flat = F.reshape(self.h_conv6_2_mbox_loc_perm, (batchsize, self.c6_h, self.c6_w, self.c6_d, 4))
+        self.h_conv6_2_mbox_conf_flat = F.reshape(self.h_conv6_2_mbox_conf_perm, (batchsize, self.c6_h, self.c6_w, self.c6_d, 21))
 
         self.h_conv7_2_mbox_loc = self.conv7_2_mbox_loc(self.h_conv7_2)
         self.h_conv7_2_mbox_conf = self.conv7_2_mbox_conf(self.h_conv7_2)
         self.h_conv7_2_mbox_loc_perm = F.transpose(self.h_conv7_2_mbox_loc,(0,2,3,1))
         self.h_conv7_2_mbox_conf_perm = F.transpose(self.h_conv7_2_mbox_conf,(0,2,3,1))
-        self.h_conv7_2_mbox_loc_flat = F.flatten(self.h_conv7_2_mbox_loc_perm)
-        self.h_conv7_2_mbox_conf_flat = F.flatten(self.h_conv7_2_mbox_conf_perm)
+        self.h_conv7_2_mbox_loc_flat = F.reshape(self.h_conv7_2_mbox_loc_perm , (batchsize, self.c7_h, self.c7_w, self.c7_d, 4))
+        self.h_conv7_2_mbox_conf_flat = F.reshape(self.h_conv7_2_mbox_conf_perm , (batchsize, self.c7_h, self.c7_w, self.c7_d, 21))
 
         self.h_conv8_2_mbox_loc = self.conv8_2_mbox_loc(self.h_conv8_2)
         self.h_conv8_2_mbox_conf = self.conv8_2_mbox_conf(self.h_conv8_2)
         self.h_conv8_2_mbox_loc_perm = F.transpose(self.h_conv8_2_mbox_loc,(0,2,3,1))
         self.h_conv8_2_mbox_conf_perm = F.transpose(self.h_conv8_2_mbox_conf,(0,2,3,1))
-        self.h_conv8_2_mbox_loc_flat = F.flatten(self.h_conv8_2_mbox_loc_perm)
-        self.h_conv8_2_mbox_conf_flat = F.flatten(self.h_conv8_2_mbox_conf_perm)
+        self.h_conv8_2_mbox_loc_flat = F.reshape(self.h_conv8_2_mbox_loc_perm, (batchsize, self.c8_h, self.c8_w, self.c8_d, 4))
+        self.h_conv8_2_mbox_conf_flat = F.reshape(self.h_conv8_2_mbox_conf_perm, (batchsize, self.c8_h, self.c8_w, self.c8_d, 21))
 
         self.h_pool6_mbox_loc = self.pool6_mbox_loc(self.h_pool6)
         self.h_pool6_mbox_conf = self.pool6_mbox_conf(self.h_pool6)
         self.h_pool6_mbox_loc_perm = F.transpose(self.h_pool6_mbox_loc,(0,2,3,1))
         self.h_pool6_mbox_conf_perm = F.transpose(self.h_pool6_mbox_conf,(0,2,3,1))
-        self.h_pool6_mbox_loc_flat = F.flatten(self.h_pool6_mbox_loc_perm)
-        self.h_pool6_mbox_conf_flat = F.flatten(self.h_pool6_mbox_conf_perm)
-
-        #TODO バッチサイズの考慮
+        self.h_pool6_mbox_loc_flat = F.reshape(self.h_pool6_mbox_loc_perm, (batchsize, self.p6_h, self.p6_w, self.p6_d, 4))
+        self.h_pool6_mbox_conf_flat = F.reshape(self.h_pool6_mbox_conf_perm, (batchsize, self.p6_h, self.p6_w, self.p6_d, 21))
+        """
         self.mbox_loc = F.concat([self.h_conv4_3_norm_mbox_loc_flat,
                                   self.h_fc7_mbox_loc_flat,
                                   self.h_conv6_2_mbox_loc_flat,
@@ -188,75 +198,49 @@ class SSD (chainer.Chain):
             self.loss = self.loss_func(h, t)
             self.accuracy = self.loss
             return self.loss
-
-    def prior(self, h, min_size, max_size,aspect, flip, clip, variance):
+        """
+    def prior(self, size, min_size, max_size, aspect, flip, clip, variance):
         aspect_ratio = [1.]
         for i in aspect:
             aspect_ratio.append(i)
             aspect_ratio.append(1/i)
-        height, width = h
+        height, width = size
         img_width = img_height = 300.
         step_x = img_width / float(width)
         step_y = img_width / float(height)
-        top_data=np.zeros(height * width * (len(aspect_ratio) + bool(max_size))* 4 )
-        idx=0
+        top_data = np.zeros([height, width, (len(aspect_ratio) + bool(max_size)), 2, 4])
+
+        wid_hei_list = [(min_size, min_size)]
+        if max_size > 0:
+            #second prior: aspect_ratio = 1, size = sqrt(min_size * max_size)
+            wid_hei_list.append((np.sqrt(min_size * max_size), np.sqrt(min_size * max_size)))
+
+        for ar in aspect_ratio:
+            if abs(ar - 1.) < 1e-6:
+                continue
+            box_width = min_size * np.sqrt(ar)
+            box_height = min_size / np.sqrt(ar)
+            wid_hei_list.append((box_width, box_height))
+
         for h in range(height):
             for w in range(width):
                 center_x = (w + 0.5) * step_x
                 center_y = (h + 0.5) * step_y
-                box_width = box_height = min_size
-                top_data[idx] = (center_x - box_width / 2.) / img_width
-                idx+=1
-                top_data[idx] = (center_y - box_height / 2.) / img_height
-                idx+=1
-                top_data[idx] = (center_x + box_width / 2.) / img_width
-                idx+=1
-                top_data[idx] = (center_y + box_height / 2.) / img_height
-                idx+=1
-                if max_size > 0:
-                    #second prior: aspect_ratio = 1, size = sqrt(min_size * max_size)
-                    box_width = box_height = np.sqrt(min_size * max_size)
-                    top_data[idx] = (center_x - box_width / 2.) / img_width
-                    idx+=1
-                    top_data[idx] = (center_y - box_height / 2.) / img_height
-                    idx+=1
-                    top_data[idx] = (center_x + box_width / 2.) / img_width
-                    idx+=1
-                    top_data[idx] = (center_y + box_height / 2.) / img_height
-                    idx+=1
-                for ar in aspect_ratio:
-                    if abs(ar - 1.) < 1e-6:
-                        continue
-                    box_width = min_size * np.sqrt(ar)
-                    box_height = min_size / np.sqrt(ar)
-
-                    top_data[idx] = (center_x - box_width / 2.) / img_width
-                    idx+=1
-                    top_data[idx] = (center_y - box_height / 2.) / img_height
-                    idx+=1
-                    top_data[idx] = (center_x + box_width / 2.) / img_width
-                    idx+=1
-                    top_data[idx] = (center_y + box_height / 2.) / img_height
-                    idx+=1
-
+                for idx, w_h in enumerate(wid_hei_list):
+                    box_width, box_height = w_h
+                    #box_width = box_height = min_size
+                    top_data[h, w, idx, 0, 0] = (center_x - box_width / 2.) / img_width
+                    top_data[h, w, idx, 0, 1] = (center_y - box_height / 2.) / img_height
+                    top_data[h, w, idx, 0, 2] = (center_x + box_width / 2.) / img_width
+                    top_data[h, w, idx, 0, 3] = (center_y + box_height / 2.) / img_height
         if clip:
-            for i in range(len(top_data)):
-                if top_data[i] > 1:
-                    top_data[i] = 1
-                elif top_data[i] < 0:
-                    top_data[i] = 0
-        val_data=np.zeros(height * width * (len(aspect_ratio) + bool(max_size))* 4 )
-        if len(variance)==1:
-            pass
-        else:
-            count = 0
-            for h in range(height):
-                for w in range(width):
-                    for ar in range(len(aspect_ratio)):
-                        for v in variance:
-                            val_data[count] = v
-                            count+=1
-        return np.vstack([top_data, val_data])
+            mid = (top_data < 1) * (top_data > 0)
+            high = (top_data > 1)
+            top_data *= mid
+            top_data += high
+
+        top_data[:, :, :, 1] = variance
+        return top_data
 
     def detection(self, nms_th=0.45, cls_th=0.6):
         prior = np.reshape(self.mbox_prior,(2, 7308, 4))
@@ -300,6 +284,8 @@ class SSD (chainer.Chain):
         prior_center_y = (prior_bbox[1] + prior_bbox[3]) / 2.
         bbox_width = bbox[2] - bbox[0]
         bbox_height = bbox[3] - bbox[1]
+        if bbox_width <=0 or bbox_height <=0:
+            return encode_bbox
         bbox_center_x = (bbox[0] + bbox[2]) / 2.
         bbox_center_y = (bbox[1] + bbox[3]) / 2.
         encode_bbox[0] = (bbox_center_x - prior_center_x) / prior_width / prior_variance[0]

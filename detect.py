@@ -31,6 +31,7 @@ model = ssd_net.SSD()
 serializers.load_npz("ssd.model", model)
 x = chainer.Variable(np.array([img],dtype=np.float32))
 model(x,1)
+"""
 a=model.detection()
 plt.imshow(image)
 currentAxis = plt.gca()
@@ -48,4 +49,5 @@ for i in a:
     color = colors[int(label)]
     currentAxis.add_patch(plt.Rectangle(*coords, fill=False, edgecolor=color, linewidth=2))
     currentAxis.text(x1, y1, display_txt, bbox={'facecolor':color, 'alpha':0.5})
-plt.show()
+#plt.show()
+"""
