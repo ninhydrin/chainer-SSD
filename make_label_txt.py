@@ -5,6 +5,8 @@ from os import listdir, getcwd
 from os.path import join
 import xml.dom.minidom
 
+import numpy as np
+
 classes = ["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 
 def convert_annotation(path):
@@ -21,9 +23,9 @@ def convert_annotation(path):
             continue
         cls_id = classes.index(cls)
         xmlbox = obj.find('bndbox')
-        bb = [float(xmlbox.find('xmin').text), float(xmlbox.find('xmax').text), float(xmlbox.find('ymin').text), float(xmlbox.find('ymax').text)]
+        bb = [float(xmlbox.find('xmin').text), float(xmlbox.find('ymin').text), float(xmlbox.find('xmax').text), float(xmlbox.find('ymax').text)]
         data.append([cls_id]+bb)
-    return data
+    return (h, w), np.array(data)
 
 def make_data(year):
     data_type = ("trainval","test")
@@ -35,8 +37,8 @@ def make_data(year):
         f_name = "{}_voc{}.pkl".format(i, year)
         for img_name in name_list:
             path = voc_path + "Annotations/{}.xml".format(img_name)
-            obj =  convert_annotation(path)
-            data.append([path, obj])
+            size, obj =  convert_annotation(path)
+            data.append([path, size, obj])
         pickle.dump(data, open(f_name, "wb"))
 
 if __name__ == "__main__":
