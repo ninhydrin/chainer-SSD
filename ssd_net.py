@@ -231,7 +231,6 @@ class SSD (chainer.Chain):
                 center_y = (h + 0.5) * step_y
                 for idx, w_h in enumerate(wid_hei_list):
                     box_width, box_height = w_h
-                    #box_width = box_height = min_size
                     top_data[h, w, idx, 0, 0] = (center_x - box_width / 2.) / img_width
                     top_data[h, w, idx, 0, 1] = (center_y - box_height / 2.) / img_height
                     top_data[h, w, idx, 0, 2] = (center_x + box_width / 2.) / img_width
@@ -255,13 +254,13 @@ class SSD (chainer.Chain):
                 for i in k:
                     cand.append(label_cand[i])
         cand = np.array(cand)
-        cand = cand[np.where(cand[:,1] >= cls_th)]
+        cand = cand[np.where(cand[:, 1] >= cls_th)]
         return cand
 
     def decoder(self, prior, loc, prior_data):
-        bbox_data = np.array([0]*4,dtype=np.float32)
-        p_xmin, p_ymin, p_xmax, p_ymax= prior
-        xmin, ymin, xmax, ymax= loc
+        bbox_data = np.array([0] * 4, dtype=np.float32)
+        p_xmin, p_ymin, p_xmax, p_ymax = prior
+        xmin, ymin, xmax, ymax = loc
         prior_width = p_xmax - p_xmin
         prior_height = p_ymax - p_ymin
         prior_center_x = (p_xmin + p_xmax) / 2.
