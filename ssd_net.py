@@ -72,31 +72,29 @@ class SSD (chainer.Chain):
         self.set_info("c8", 3, 3, 6)
         self.set_info("p6", 1, 1, 6)
 
-        self.conv4_3_norm_mbox_priorbox = self.prior((38, 38), 30., 0, [2], 1, 1,(0.1, 0.1, 0.2, 0.2))
-        self.fc7_mbox_priorbox = self.prior((19, 19), 60., 114., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+        self.conv4_3_norm_mbox_priorbox = self.prior((38, 38), 30., 0, [2], 1, 1, (0.1, 0.1, 0.2, 0.2))
+        self.fc7_mbox_priorbox = self.prior((19, 19), 60., 114., [2, 3], 1, 1, (0.1, 0.1, 0.2, 0.2))
         self.conv6_2_mbox_priorbox = self.prior((10, 10), 114., 168., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.conv7_2_mbox_priorbox = self.prior((5, 5),168., 222., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.conv8_2_mbox_priorbox = self.prior((3, 3), 222., 276., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.pool6_mbox_priorbox = self.prior((1, 1), 276., 330., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
-
-        """
-        self.mbox_prior = np.hstack([self.conv4_3_norm_mbox_priorbox,
-                                     self.fc7_mbox_priorbox,
-                                     self.conv6_2_mbox_priorbox,
-                                     self.conv7_2_mbox_priorbox,
-                                     self.conv8_2_mbox_priorbox,
-                                     self.pool6_mbox_priorbox])
-        """
+        self.mbox_prior = np.concatenate([
+            self.conv4_3_norm_mbox_priorbox.reshape(-1, 2, 4),
+            self.fc7_mbox_priorbox.reshape(-1, 2, 4),
+            self.conv6_2_mbox_priorbox.reshape(-1, 2, 4),
+            self.conv7_2_mbox_priorbox.reshape(-1, 2, 4),
+            self.conv8_2_mbox_priorbox.reshape(-1, 2, 4),
+            self.pool6_mbox_priorbox.reshape(-1, 2, 4),
+        ], axis=0)
 
     def __call__(self, x, t):
-
         h = F.relu(self.conv1_1(x))
-        h = F.max_pooling_2d(F.relu(self.conv1_2(h)),2,2)
+        h = F.max_pooling_2d(F.relu(self.conv1_2(h)), 2, 2)
         h = F.relu(self.conv2_1(h))
-        h = F.max_pooling_2d(F.relu(self.conv2_2(h)),2,2)
+        h = F.max_pooling_2d(F.relu(self.conv2_2(h)), 2, 2)
         h = F.relu(self.conv3_1(h))
         h = F.relu(self.conv3_2(h))
-        h = F.max_pooling_2d(F.relu(self.conv3_3(h)),2,2)
+        h = F.max_pooling_2d(F.relu(self.conv3_3(h)), 2, 2)
         h = F.relu(self.conv4_1(h))
         h = F.relu(self.conv4_2(h))
         h = F.relu(self.conv4_3(h))
@@ -127,12 +125,12 @@ class SSD (chainer.Chain):
         h = F.average_pooling_2d(h, 3)
         self.h_pool6 = h
 
-        batchsize,ch,hh,ww = self.h_conv4_3.shape
-        kari = F.reshape(self.h_conv4_3,(batchsize*ch, hh*ww))
-        kari = F.transpose(kari, (1,0))
+        batchsize, ch, hh, ww = self.h_conv4_3.shape
+        kari = F.reshape(self.h_conv4_3, (batchsize*ch, hh*ww))
+        kari = F.transpose(kari, (1, 0))
         kari = F.normalize(kari)
-        kari = F.transpose(kari, (1,0))
-        kari = F.reshape(kari,(batchsize, ch, hh, ww))
+        kari = F.transpose(kari, (1, 0))
+        kari = F.reshape(kari, (batchsize, ch, hh, ww))
 
         self.h_conv4_3_norm = self.normalize(kari)
         self.h_conv4_3_norm_mbox_loc = self.conv4_3_norm_mbox_loc(self.h_conv4_3_norm)
@@ -177,28 +175,33 @@ class SSD (chainer.Chain):
         self.h_pool6_mbox_conf_perm = F.transpose(self.h_pool6_mbox_conf,(0,2,3,1))
         self.h_pool6_mbox_loc_flat = F.reshape(self.h_pool6_mbox_loc_perm, (batchsize, self.p6_h, self.p6_w, self.p6_d, 4))
         self.h_pool6_mbox_conf_flat = F.reshape(self.h_pool6_mbox_conf_perm, (batchsize, self.p6_h, self.p6_w, self.p6_d, 21))
-        """
-        self.mbox_loc = F.concat([self.h_conv4_3_norm_mbox_loc_flat,
-                                  self.h_fc7_mbox_loc_flat,
-                                  self.h_conv6_2_mbox_loc_flat,
-                                  self.h_conv7_2_mbox_loc_flat,
-                                  self.h_conv8_2_mbox_loc_flat,
-                                  self.h_pool6_mbox_loc_flat],axis=0)
 
-        self.mbox_conf = F.concat([self.h_conv4_3_norm_mbox_conf_flat,
-                                   self.h_fc7_mbox_conf_flat,
-                                   self.h_conv6_2_mbox_conf_flat,
-                                   self.h_conv7_2_mbox_conf_flat,
-                                   self.h_conv8_2_mbox_conf_flat,
-                                   self.h_pool6_mbox_conf_flat],axis=0)
+        self.mbox_loc = F.concat([
+            F.reshape(self.h_conv4_3_norm_mbox_loc_flat, [batchsize, -1, 4]),
+            F.reshape(self.h_fc7_mbox_loc_flat, [batchsize, -1, 4]),
+            F.reshape(self.h_conv6_2_mbox_loc_flat, [batchsize, -1, 4]),
+            F.reshape(self.h_conv7_2_mbox_loc_flat, [batchsize, -1, 4]),
+            F.reshape(self.h_conv8_2_mbox_loc_flat, [batchsize, -1, 4]),
+            F.reshape(self.h_pool6_mbox_loc_flat, [batchsize, -1, 4]),
+        ], axis=1)
 
-        self.mbox_conf_reahpe = F.reshape(self.mbox_conf,(7308,21))
+        self.mbox_conf = F.concat([
+            F.reshape(self.h_conv4_3_norm_mbox_conf_flat, [batchsize, -1, 21]),
+            F.reshape(self.h_fc7_mbox_conf_flat, [batchsize, -1, 21]),
+            F.reshape(self.h_conv6_2_mbox_conf_flat, [batchsize, -1, 21]),
+            F.reshape(self.h_conv7_2_mbox_conf_flat, [batchsize, -1, 21]),
+            F.reshape(self.h_conv8_2_mbox_conf_flat, [batchsize, -1, 21]),
+            F.reshape(self.h_pool6_mbox_conf_flat, [batchsize, -1, 21]),
+        ], axis=1)
+
+        self.mbox_conf_reahpe = F.reshape(self.mbox_conf, (7308 * batchsize, 21))
         self.mbox_conf_softmax = F.softmax(self.mbox_conf_reahpe)
+        self.mbox_conf_softmax_reahpe = F.reshape(self.mbox_conf, (batchsize, 7308, 21))
         if self.train:
             self.loss = self.loss_func(h, t)
             self.accuracy = self.loss
             return self.loss
-        """
+
     def prior(self, size, min_size, max_size, aspect, flip, clip, variance):
         aspect_ratio = [1.]
         for i in aspect:
@@ -234,28 +237,25 @@ class SSD (chainer.Chain):
                     top_data[h, w, idx, 0, 2] = (center_x + box_width / 2.) / img_width
                     top_data[h, w, idx, 0, 3] = (center_y + box_height / 2.) / img_height
         if clip:
-            mid = (top_data < 1) * (top_data > 0)
-            high = (top_data > 1)
-            top_data *= mid
-            top_data += high
-
+            top_data[np.where(top_data < 0)] = 0
+            top_data[np.where(top_data > 1)] = 1
         top_data[:, :, :, 1] = variance
         return top_data
 
-    def detection(self, nms_th=0.45, cls_th=0.6):
-        prior = np.reshape(self.mbox_prior,(2, 7308, 4))
-        loc = np.reshape(self.mbox_loc.data, (7308, 4))
+    def detection(self, idx, nms_th=0.45, cls_th=0.6):
+        prior = self.mbox_prior
+        loc = self.mbox_loc.data[idx]
         conf = self.mbox_conf_softmax.data
         cand = []
-        for label in range(1,21):
-            l = conf[:,label].argsort()
-            label_cand = np.array([np.hstack([label, conf[i, label] ,self.decoder(prior[0, i], loc[i], prior[1, i])]) for i in l if conf[i,label] > 0.1])
+        for label in range(1, 21):
+            l = conf[:, label].argsort()
+            label_cand = np.array([np.hstack([label, score, self.decoder(prior[pos, 0], loc[pos], prior[pos, 1])]) for pos, score in enumerate(conf[:, label]) if score > 0.1])
             if label_cand.any():
-                k = self.nms(label_cand[:,2:], label_cand[:,1], 0.1, nms_th, 200)
+                k = self.nms(label_cand[:, 2:], label_cand[:, 1], 0.1, nms_th, 200)
                 for i in k:
                     cand.append(label_cand[i])
         cand = np.array(cand)
-        cand = cand[np.where(cand[:,1]>=cls_th)]
+        cand = cand[np.where(cand[:,1] >= cls_th)]
         return cand
 
     def decoder(self, prior, loc, prior_data):
