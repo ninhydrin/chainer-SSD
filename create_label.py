@@ -7,14 +7,35 @@ import ssd_net
 
 model = ssd_net.SSD()
 data = pickle.load(open("test_voc2007.pkl", "rb"))
+cropwidth = 256 - model.insize
 
 
-class TrainMaker:
+class Feeder:
+
     def __init__(self, prior, datas, insize=300):
         self.prior = prior
         self.datas = datas
         self.insize = insize
         self.prior_num = self.prior.shape[0]
+
+    def read_image(self, data, center=False, flip=False):
+        path, size, BBs = data
+        image = np.asarray(Image.open(path).convert("RGB").resize((self.insize, self.insize)))
+        image = image.transpose(2, 0, 1)
+        if center:
+            top = left = cropwidth / 2
+        else:
+            top = np.random.randint(0, cropwidth - 1)
+            left = np.random.randint(0, cropwidth - 1)
+        bottom = model.insize + top
+        right = model.insize + left
+        image = image[:, top:bottom, left:right].astype(np.float32)
+        image -= mean_image[:, top:bottom, left:right]
+        # image /= 255
+        if flip and random.randint(0, 1) == 0:
+            return image[:, :, ::-1]
+        else:
+            return image
 
     def make_sample(self, data):
         path, size, BBs = data
@@ -62,3 +83,51 @@ class TrainMaker:
         encode_bbox[2] = np.log(bbox_width / prior_width) / prior_variance[2]
         encode_bbox[3] = np.log(bbox_height / prior_height) / prior_variance[3]
         return encode_bbox
+
+    def feed_data(self):
+    # Data feeder
+        i = 0
+        count = 0
+        x_batch = np.ndarray(
+            (args.batchsize, 3, model.insize, model.insize), dtype=np.float32)
+        y_batch = np.ndarray((args.batchsize,), dtype=np.int32)
+        val_x_batch = np.ndarray(
+            (args.val_batchsize, 3, model.insize, model.insize), dtype=np.float32)
+        val_y_batch = np.ndarray((args.val_batchsize,), dtype=np.int32)
+
+        batch_pool = [None] * args.batchsize
+        val_batch_pool = [None] * args.val_batchsize
+        pool = multiprocessing.Pool(args.loaderjob)
+        data_q.put('train')
+
+        for epoch in range(1, 1 + args.epoch):
+            perm = np.random.permutation(len(train_list))
+            for idx in perm:
+                data = train_list[idx]
+                batch_pool[i] = pool.apply_async(self.read_image, (data, False, True))
+                i += 1
+
+                if i == args.batchsize:
+                    for j, x in enumerate(batch_pool):
+                        x_batch[j], y_batch[j] = x.get()
+                    data_q.put((x_batch.copy(), y_batch.copy()))
+                    i = 0
+
+                count += 1
+                if count % denominator == 0:
+                    data_q.put('val')
+                    j = 0
+                    for data in val_list:
+                        val_batch_pool[j] = pool.apply_async(
+                            read_image, (data, True, False))
+                        j += 1
+                        if j == args.val_batchsize:
+                            for k, x in enumerate(val_batch_pool):
+                                val_x_batch[k], val_y_batch[k] = x.get()
+                            data_q.put((val_x_batch.copy(), val_y_batch.copy()))
+                            j = 0
+
+                    data_q.put('train')
+        pool.close()
+        pool.join()
+        data_q.put('end')
