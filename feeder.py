@@ -96,6 +96,15 @@ class Feeder:
         encode_bbox[3] = np.log(bbox_height / prior_height) / prior_variance[3]
         return encode_bbox
 
+    def flip(self, size, BB):
+        BB[:, 0], BB[:, 2] = size[0] - BB[:, 2], size[0] - BB[:, 0]
+
+    def fit_BB(self, src_bbox, BB):
+        BB[:, 0][np.where(BB[:,0] < src_bbox[0])] = src_bbox[0]
+        BB[:, 1][np.where(BB[:,1] < src_bbox[1])] = src_bbox[1]
+        BB[:, 2][np.where(BB[:,2] > src_bbox[2])] = src_bbox[2]
+        BB[:, 3][np.where(BB[:,3] > src_bbox[3])] = src_bbox[3]
+
     def feed_data(self):
     # Data feeder
         args = self.args
