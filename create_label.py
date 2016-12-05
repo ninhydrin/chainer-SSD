@@ -1,22 +1,35 @@
 import pickle
+import multiprocessing
 
 import numpy as np
+from PIL import Image
 
 import bbox
-import ssd_net
 
-model = ssd_net.SSD()
 data = pickle.load(open("test_voc2007.pkl", "rb"))
 cropwidth = 256 - model.insize
 
 
 class Feeder:
 
-    def __init__(self, prior, datas, insize=300):
+    def __init__(self, prior, train_list, val_list, mean, args, data_q, denominator=100000, insize=300):
         self.prior = prior
-        self.datas = datas
+        self.train_list = train_list
+        self.val_list = val_list
         self.insize = insize
         self.prior_num = self.prior.shape[0]
+        self.mean = mean
+        self.args = args
+        self.data_q = data_q
+        self.denominator = denominator
+
+    def change_aspect(self, size, BB):
+        aspect_h = 0.5 + np.random.random() * 1.5
+        aspect_w = 0.5 + np.random.random() * 1.5
+        size[0] *= aspect_h
+        size[1] *= aspect_w
+        BB[:, (0, 2)] *= aspect_w
+        BB[:, (1, 3)] *= aspect_h
 
     def read_image(self, data, center=False, flip=False):
         path, size, BBs = data
@@ -27,12 +40,12 @@ class Feeder:
         else:
             top = np.random.randint(0, cropwidth - 1)
             left = np.random.randint(0, cropwidth - 1)
-        bottom = model.insize + top
-        right = model.insize + left
+        bottom = self.insize + top
+        right = self.insize + left
         image = image[:, top:bottom, left:right].astype(np.float32)
-        image -= mean_image[:, top:bottom, left:right]
+        image -= self.mean[:, top:bottom, left:right]
         # image /= 255
-        if flip and random.randint(0, 1) == 0:
+        if flip and np.random.randint(2) == 0:
             return image[:, :, ::-1]
         else:
             return image
@@ -47,9 +60,7 @@ class Feeder:
         BB[:, (1, 3)] *= self.insize/h
         loc_mask = np.zeros([self.prior_num, 4])
         conf_mask = np.zeros([self.prior_num, 21])
-
         overlap = bbox.bbox_overlaps2(self.prior[:, 0] * self.insize, BB)
-
         positions = np.array(np.where(overlap > 0.5))
         conf_mask[positions[0]] = 1
         loc_mask[positions[0]] = 1
@@ -86,48 +97,70 @@ class Feeder:
 
     def feed_data(self):
     # Data feeder
+        args = self.args
         i = 0
         count = 0
         x_batch = np.ndarray(
-            (args.batchsize, 3, model.insize, model.insize), dtype=np.float32)
+            (args.batchsize, 3, self.insize, self.insize), dtype=np.float32)
         y_batch = np.ndarray((args.batchsize,), dtype=np.int32)
         val_x_batch = np.ndarray(
-            (args.val_batchsize, 3, model.insize, model.insize), dtype=np.float32)
+            (args.val_batchsize, 3, self.insize, self.insize), dtype=np.float32)
         val_y_batch = np.ndarray((args.val_batchsize,), dtype=np.int32)
 
         batch_pool = [None] * args.batchsize
         val_batch_pool = [None] * args.val_batchsize
         pool = multiprocessing.Pool(args.loaderjob)
-        data_q.put('train')
+        self.data_q.put('train')
 
         for epoch in range(1, 1 + args.epoch):
-            perm = np.random.permutation(len(train_list))
+            perm = np.random.permutation(len(self.train_list))
             for idx in perm:
-                data = train_list[idx]
+                data = self.train_list[idx]
                 batch_pool[i] = pool.apply_async(self.read_image, (data, False, True))
                 i += 1
 
                 if i == args.batchsize:
                     for j, x in enumerate(batch_pool):
                         x_batch[j], y_batch[j] = x.get()
-                    data_q.put((x_batch.copy(), y_batch.copy()))
+                    self.data_q.put((x_batch.copy(), y_batch.copy()))
                     i = 0
 
                 count += 1
-                if count % denominator == 0:
-                    data_q.put('val')
+                if count % self.denominator == 0:
+                    self.data_q.put('val')
                     j = 0
-                    for data in val_list:
+                    for data in self.val_list:
                         val_batch_pool[j] = pool.apply_async(
-                            read_image, (data, True, False))
+                            self.read_image, (data, True, False))
                         j += 1
                         if j == args.val_batchsize:
                             for k, x in enumerate(val_batch_pool):
                                 val_x_batch[k], val_y_batch[k] = x.get()
-                            data_q.put((val_x_batch.copy(), val_y_batch.copy()))
+                            self.data_q.put((val_x_batch.copy(), val_y_batch.copy()))
                             j = 0
 
-                    data_q.put('train')
+                    self.data_q.put('train')
         pool.close()
         pool.join()
-        data_q.put('end')
+        self.data_q.put('end')
+
+class Sampler:
+    class BatchSampler:
+        def __init__(self, max_scale, min_scale, max_ar, min_ar, min_jacc, max_trial, max_sample):
+            self.max_scale = max_scale
+            self.min_scale = min_scale
+            self.max_ar = max_ar
+            self.min_ar = min_ar
+            self.min_jacc = min_jacc
+            self.max_trial = max_trial
+            self.max_sample = max_sample
+
+    def __init__(self, batch_sampler,):
+        self.batch_sampler = batch_sampler
+
+    def sample_bbox(self, sampler):
+        # TODO 何もしない時
+
+        scale = sampler.min_scale + (sampler.max_scale - sampler.min_scale) * np.random.random()
+        
+

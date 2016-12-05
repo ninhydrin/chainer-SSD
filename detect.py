@@ -2,13 +2,11 @@ import argparse
 
 import matplotlib.pyplot as plt
 import numpy as np
-#import cv2
 import skimage.io
 import skimage.draw
 from skimage.transform import resize
 import chainer
 from chainer import serializers
-
 
 import ssd_net
 
@@ -17,8 +15,9 @@ labelmap = ['aeroplane', 'bicycle', 'bird', 'boat', 'bottle', 'bus', 'car',
             'person', 'pottedplant', 'sheep', 'sofa', 'train', 'tvmonitor']
 
 parser = argparse.ArgumentParser(
-    description='Learning convnet from ILSVRC2012 dataset')
+    description='detect object')
 parser.add_argument('path', help='Path to training image-label list file')
+
 args = parser.parse_args()
 mean = np.array([104, 117, 123])
 image = skimage.img_as_float(skimage.io.imread(args.path, as_grey=False)).astype(np.float32)
@@ -32,11 +31,13 @@ serializers.load_npz("ssd.model", model)
 x = chainer.Variable(np.array([img], dtype=np.float32))
 model(x, 1)
 
-a=model.detection(0)
+cand = model.detection(0)
+
 plt.imshow(image)
 currentAxis = plt.gca()
 colors = plt.cm.hsv(np.linspace(0, 1, 21)).tolist()
-for i in a:
+
+for i in cand:
     label, conf, x1, y1, x2, y2 = i
     label = int(label) - 1
     x1 = int(round(x1 * image.shape[1]))

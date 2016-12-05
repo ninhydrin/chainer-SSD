@@ -1,33 +1,27 @@
 #!/usr/bin/env python
-from __future__ import print_function
+# from __future__ import print_function
 import argparse
-import datetime
-import json
-import multiprocessing
 import os
-import random
 import sys
 import threading
 import time
 
 import numpy as np
-from PIL import Image
-import six
-import six.moves.cPickle as pickle
-from six.moves import queue
+import queue
 
 import chainer
-from chainer import computational_graph
 from chainer import cuda
 from chainer import optimizers
 from chainer import serializers
+
+import ssd_net
 
 
 parser = argparse.ArgumentParser(
     description='Learning SSD')
 parser.add_argument('train', help='Path to training image-label list file')
 parser.add_argument('val', help='Path to validation image-label list file')
-parser.add_argument('--mean', '-m', default='mean.npy',
+parser.add_argument('--mean', '-m', default='',
                     help='Path to the mean file (computed by compute_mean.py)')
 parser.add_argument('--batchsize', '-B', type=int, default=100,
                     help='Learning minibatch size')
@@ -39,8 +33,10 @@ parser.add_argument('--gpu', '-g', default=0, type=int,
                     help='GPU ID (negative value indicates CPU)')
 parser.add_argument('--loaderjob', '-j', default=20, type=int,
                     help='Number of parallel data loading processes')
-parser.add_argument('--root', '-r', default='.',
-                    help='Root directory path of image files')
+parser.add_argument('--train_root', '-tr', default='.',
+                    help='Root directory path of train image files')
+parser.add_argument('--val_root', '-vr', default='.',
+                    help='Root directory path of val image files')
 parser.add_argument('--out', '-o', default='random_break_conv_fix.model',
                     help='Path to save model on each validation')
 parser.add_argument('--outstate', '-s', default='state',
@@ -49,9 +45,10 @@ parser.add_argument('--initmodel', default='',
                     help='Initialize the model from given file')
 parser.add_argument('--resume', default='',
                     help='Resume the optimization from snapshot')
-parser.add_argument('--test', dest='test', action='store_true')
+
 parser.set_defaults(test=False)
 args = parser.parse_args()
+
 
 def model_resume():
     if args.initmodel:
@@ -62,12 +59,9 @@ def model_resume():
         serializers.load_npz(args.resume, optimizer)
 
 
-assert 50000 % args.val_batchsize == 0
-
-if args.test:
-    denominator = 1
-else:
-    denominator = 100000
+def model_save(name):
+    serializers.save_npz(args.out.format(name), model)
+    serializers.save_npz(args.outstate.format(name), optimizer)
 
 
 def load_image_list(path, root):
@@ -77,17 +71,18 @@ def load_image_list(path, root):
         tuples.append((os.path.join(root, pair[0]), np.int32(pair[1])))
     return tuples
 
-# Prepare dataset
-train_list = load_image_list(args.train, "imTrain")
-val_list = load_image_list(args.val, args.root)
-mean_image = np.load(args.mean)
+assert 50000 % args.val_batchsize == 0
 
-import ssd_net
+denominator = 100000
+
+train_list = load_image_list(args.train, args.tr)
+val_list = load_image_list(args.val, args.vr)
+mean_image = np.load(args.mean) if args.mean else np.array([104, 117, 123])
+
 model = ssd_net.SSD()
 optimizer = optimizers.MomentumSGD(lr=0.0001, momentum=0.9)
 optimizer.setup(model)
-#optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
-
+# optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
 
 model_resume()
 data_q = queue.Queue(maxsize=1)
@@ -111,6 +106,7 @@ class Trainer:
 
     def train_loop(self):
         # Trainer
+        val_count = 0
         while True:
             while data_q.empty():
                 time.sleep(0.1)
@@ -124,8 +120,7 @@ class Trainer:
                 continue
             elif inp == 'val':  # start validation
                 self.res_q.put('val')
-                serializers.save_npz(args.out, model)
-                serializers.save_npz(args.outstate, optimizer)
+                model_save(val_count * denominator)
                 model.train = False
                 continue
 
@@ -138,11 +133,12 @@ class Trainer:
             else:
                 self.model(x, t)
 
-            self.argsres_q.put(
+            self.res_q.put(
                 (float(self.model.loss.data), float(self.model.accuracy.data)))
             del x, t
 
 # Invoke threads
+
 feeder = threading.Thread(target=feed_data)
 feeder.daemon = True
 feeder.start()
@@ -155,5 +151,4 @@ feeder.join()
 logger.join()
 
 # Save final model
-serializers.save_npz(args.out, model)
-serializers.save_npz(args.outstate, optimizer)
+model_save("final")

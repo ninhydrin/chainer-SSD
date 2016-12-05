@@ -14,35 +14,35 @@ class SSD (chainer.Chain):
 
     def __init__(self):
         super(SSD, self).__init__(
-            conv1_1 =  L.Convolution2D(3,  64, 3, pad=1),
-            conv1_2 =  L.Convolution2D(64,  64, 3, pad=1),
-            conv2_1 = L.Convolution2D(64, 128,  3, pad=1),
-            conv2_2 = L.Convolution2D(128, 128,  3, pad=1),
-            conv3_1= L.Convolution2D(128, 256,  3, pad=1),
-            conv3_2= L.Convolution2D(256, 256,  3, pad=1),
-            conv3_3= L.Convolution2D(256, 256,  3, pad=1),
+            conv1_1=L.Convolution2D(3,  64, 3, pad=1),
+            conv1_2=L.Convolution2D(64,  64, 3, pad=1),
+            conv2_1=L.Convolution2D(64, 128,  3, pad=1),
+            conv2_2=L.Convolution2D(128, 128,  3, pad=1),
+            conv3_1=L.Convolution2D(128, 256,  3, pad=1),
+            conv3_2=L.Convolution2D(256, 256,  3, pad=1),
+            conv3_3=L.Convolution2D(256, 256,  3, pad=1),
 
-            conv4_1= L.Convolution2D(256, 512,  3, pad=1),
-            conv4_2= L.Convolution2D(512, 512,  3, pad=1),
-            conv4_3= L.Convolution2D(512, 512,  3, pad=1),
+            conv4_1=L.Convolution2D(256, 512,  3, pad=1),
+            conv4_2=L.Convolution2D(512, 512,  3, pad=1),
+            conv4_3=L.Convolution2D(512, 512,  3, pad=1),
 
-            conv5_1= L.Convolution2D(512, 512,  3, pad=1),
-            conv5_2= L.Convolution2D(512, 512,  3, pad=1),
-            conv5_3= L.Convolution2D(512, 512,  3, pad=1),
+            conv5_1=L.Convolution2D(512, 512,  3, pad=1),
+            conv5_2=L.Convolution2D(512, 512,  3, pad=1),
+            conv5_3=L.Convolution2D(512, 512,  3, pad=1),
 
-            fc6 = L.DilatedConvolution2D(512, 1024,  3, pad=6,dilate=6),
-            fc7 = L.Convolution2D(1024, 1024,  1),
+            fc6=L.DilatedConvolution2D(512, 1024,  3, pad=6, dilate=6),
+            fc7=L.Convolution2D(1024, 1024, 1),
 
-            conv6_1 = L.Convolution2D(1024, 256,  1),
-            conv6_2 = L.Convolution2D(256, 512,  3, stride=2, pad=1),
+            conv6_1=L.Convolution2D(1024, 256,  1),
+            conv6_2=L.Convolution2D(256, 512,  3, stride=2, pad=1),
 
-            conv7_1 = L.Convolution2D(512, 128,  1),
-            conv7_2 = L.Convolution2D(128, 256,  3, stride=2, pad=1),
+            conv7_1=L.Convolution2D(512, 128,  1),
+            conv7_2=L.Convolution2D(128, 256,  3, stride=2, pad=1),
 
-            conv8_1 = L.Convolution2D(256, 128,  1),
-            conv8_2 = L.Convolution2D(128, 256,  3, stride=2, pad=1),
+            conv8_1=L.Convolution2D(256, 128,  1),
+            conv8_2=L.Convolution2D(128, 256,  3, stride=2, pad=1),
 
-            normalize = L.Scale(W_shape=512),
+            normalize=L.Scale(W_shape=512),
 
 
             conv4_3_norm_mbox_loc = L.Convolution2D(512, 12,  3, pad=1), #3 prior boxes
@@ -247,8 +247,7 @@ class SSD (chainer.Chain):
         conf = self.mbox_conf_softmax.data
         cand = []
         for label in range(1, 21):
-            l = conf[:, label].argsort()
-            label_cand = np.array([np.hstack([label, score, self.decoder(prior[pos, 0], loc[pos], prior[pos, 1])]) for pos, score in enumerate(conf[:, label]) if score > 0.1])
+            label_cand = np.array([np.hstack([label, score, self.decoder(loc[pos], prior[pos])]) for pos, score in enumerate(conf[:, label]) if score > 0.1])
             if label_cand.any():
                 k = self.nms(label_cand[:, 2:], label_cand[:, 1], 0.1, nms_th, 200)
                 for i in k:
@@ -257,7 +256,9 @@ class SSD (chainer.Chain):
         cand = cand[np.where(cand[:, 1] >= cls_th)]
         return cand
 
-    def decoder(self, prior, loc, prior_data):
+    def decoder(self, loc, prior):
+        prior_data = prior[1]
+        prior = prior[0]
         bbox_data = np.array([0] * 4, dtype=np.float32)
         p_xmin, p_ymin, p_xmax, p_ymax = prior
         xmin, ymin, xmax, ymax = loc
@@ -276,14 +277,14 @@ class SSD (chainer.Chain):
         return bbox_data
 
     def encoder(self, prior_bbox, bbox, prior_variance):
-        encode_bbox = np.array([0]*4,dtype=np.float32)
+        encode_bbox = np.array([0]*4, dtype=np.float32)
         prior_width = prior_bbox[2] - prior_bbox[0]
         prior_height = prior_bbox[3] - prior_bbox[1]
         prior_center_x = (prior_bbox[0] + prior_bbox[2]) / 2.
         prior_center_y = (prior_bbox[1] + prior_bbox[3]) / 2.
         bbox_width = bbox[2] - bbox[0]
         bbox_height = bbox[3] - bbox[1]
-        if bbox_width <=0 or bbox_height <=0:
+        if bbox_width <= 0 or bbox_height <= 0:
             return encode_bbox
         bbox_center_x = (bbox[0] + bbox[2]) / 2.
         bbox_center_y = (bbox[1] + bbox[3]) / 2.
