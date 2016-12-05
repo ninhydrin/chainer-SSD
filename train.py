@@ -75,8 +75,10 @@ assert 50000 % args.val_batchsize == 0
 
 denominator = 100000
 
-train_list = load_image_list(args.train, args.tr)
-val_list = load_image_list(args.val, args.vr)
+#train_list = load_image_list(args.train, args.tr)
+#val_list = load_image_list(args.val, args.vr)
+train_list = 1
+val_list =1 
 mean_image = np.load(args.mean) if args.mean else np.array([104, 117, 123])
 
 model = ssd_net.SSD()
@@ -96,6 +98,10 @@ if args.gpu >= 0:
     cuda.check_cuda_available()
 xp = cuda.cupy if args.gpu >= 0 else np
 
+import feeder
+import logger
+import batch_sampler
+feed_data = feeder.Feeder(model.mbox_prior, train_list, val_list, mean_image, batch_sampler.batch_sampler, data_q, args)
 
 class Trainer:
     def __init__(self, model, data_q, res_q, args):
@@ -138,7 +144,7 @@ class Trainer:
             del x, t
 
 # Invoke threads
-
+"""
 feeder = threading.Thread(target=feed_data)
 feeder.daemon = True
 feeder.start()
@@ -152,3 +158,4 @@ logger.join()
 
 # Save final model
 model_save("final")
+"""

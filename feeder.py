@@ -7,12 +7,12 @@ from PIL import Image
 import bbox
 
 data = pickle.load(open("test_voc2007.pkl", "rb"))
-cropwidth = 256 - model.insize
+#cropwidth = 256 - model.insize
 
 
 class Feeder:
 
-    def __init__(self, prior, train_list, val_list, mean, args, data_q, denominator=100000, insize=300):
+    def __init__(self, prior, train_list, val_list, mean, batch_sampler, data_q, args, denominator=100000, insize=300):
         self.prior = prior
         self.train_list = train_list
         self.val_list = val_list
@@ -22,6 +22,7 @@ class Feeder:
         self.args = args
         self.data_q = data_q
         self.denominator = denominator
+        self.sampler = Sampler(batch_sampler)
 
     def change_aspect(self, size, BB):
         aspect_h = 0.5 + np.random.random() * 1.5
@@ -145,22 +146,73 @@ class Feeder:
         self.data_q.put('end')
 
 class Sampler:
+
     class BatchSampler:
-        def __init__(self, max_scale, min_scale, max_ar, min_ar, min_jacc, max_trial, max_sample):
-            self.max_scale = max_scale
-            self.min_scale = min_scale
-            self.max_ar = max_ar
-            self.min_ar = min_ar
-            self.min_jacc = min_jacc
-            self.max_trial = max_trial
-            self.max_sample = max_sample
+        def __init__(self, sampler):
+            if sampler["sampler"]:
+                for key in sampler["sampler"].keys():
+                    setattr(self,key, sampler["sampler"][key])
+            if sampler["sample_constraint"]:
+                for key in sampler["sampler"].keys():
+                    setattr(self,key, sampler["sampler"][key])
+            self.max_trial = sampler["max_trials"]
+            self.max_sample = sampler["max_sample"]
 
     def __init__(self, batch_sampler,):
-        self.batch_sampler = batch_sampler
+        self.batch_sampler = []
+        for sampler in batch_sampler:
+            self.batch_sampler.append(Sampler.BatchSampler(sampler))
+
+    def __call__(self, src_bbox, BB):
+        new_samples = []
+        new_samples.append(self.generate_samples())
+
+    def generate_samples(self,src_bbox, BB):
+        new_bboxes = []
+        for sampler in self.batch_sampler:
+            if sampler.max_trial == 1:
+                new_bboxes.append(src_bbox)
+                continue
+            found = None
+            for i in range(sampler.max_trial):
+
+                if found:
+                    break
+                trans_bbox = self.sample_bbox(sampler)
+                new_bbox = self.locate_bbox(src_bbox, trans_bbox)
+                if self.satisfy_constraint(np.array([new_bbox]), BB, sampler):
+                    found = True
+            if found:
+                new_bboxes.append(new_bbox)
+            else:
+                new_bboxes.append(np.array(src_bbox))
+        return new_bboxes
 
     def sample_bbox(self, sampler):
-        # TODO 何もしない時
-
         scale = sampler.min_scale + (sampler.max_scale - sampler.min_scale) * np.random.random()
-        
+        min_ar = max(sampler.min_aspect_ratio, np.math.pow(scale, 2))
+        max_ar = min(sampler.max_aspect_ratio, 1/np.math.pow(scale, 2))
+        aspect_ratio = min_ar + (max_ar - min_ar) * np.random.random()
+        bbox_width = scale * np.sqrt(aspect_ratio)
+        bbox_height = scale / np.sqrt(aspect_ratio)
+        w_off = (1 - bbox_width) * np.random.random()
+        h_off = (1 - bbox_height) * np.random.random()
+        return (w_off, h_off, w_off + bbox_width, h_off + bbox_height)
 
+    def locate_bbox(self, src_bbox, bbox):
+        loc_bbox = np.array([0]*4)
+        src_width = src_bbox[2] - src_bbox[0]
+        src_height = src_bbox[3] - src_bbox[1]
+        loc_bbox[0] = src_bbox[0] + bbox[0] * src_width
+        loc_bbox[1] = src_bbox[1] + bbox[1] * src_height
+        loc_bbox[2] = src_bbox[0] + bbox[2] * src_width
+        loc_bbox[3] = src_bbox[1] + bbox[3] * src_height;
+        return loc_bbox
+
+    def satisfy_constraint(self, sample_bbox, object_bboxes, sampler):
+        jaccords = bbox.bbox_overlaps2(sample_bbox.astype(np.float), object_bboxes.astype(np.float))
+        if hasattr(sampler, "min_jaccard_overlap") and (jaccords < sampler.min_jaccard_overlap).sum():
+            return False
+        if hasattr(sampler, "max_jaccard_overlap") and (jaccords > sampler.max_jaccard_overlap).sum():
+            return False
+        return True
