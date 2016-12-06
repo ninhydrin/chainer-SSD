@@ -2,6 +2,7 @@
 import chainer
 import chainer.links as L
 import chainer.functions as F
+from chainer import cuda
 import numpy as np
 
 class SSD (chainer.Chain):
@@ -87,7 +88,7 @@ class SSD (chainer.Chain):
             self.pool6_mbox_priorbox.reshape(-1, 2, 4),
         ], axis=0)
 
-    def __call__(self, x, t):
+    def __call__(self, x, t_conf, t_loc, conf_mask, loc_mask):
         h = F.relu(self.conv1_1(x))
         h = F.max_pooling_2d(F.relu(self.conv1_2(h)), 2, 2)
         h = F.relu(self.conv2_1(h))
@@ -132,21 +133,21 @@ class SSD (chainer.Chain):
         kari = F.transpose(kari, (1, 0))
         kari = F.reshape(kari, (batchsize, ch, hh, ww))
 
-        self.h_conv4_3_norm = self.normalize(kari)
-        self.h_conv4_3_norm_mbox_loc = self.conv4_3_norm_mbox_loc(self.h_conv4_3_norm)
-        self.h_conv4_3_norm_mbox_conf = self.conv4_3_norm_mbox_conf(self.h_conv4_3_norm)
-        self.h_conv4_3_norm_mbox_loc_perm = F.transpose(self.h_conv4_3_norm_mbox_loc,(0,2,3,1))
-        self.h_conv4_3_norm_mbox_conf_perm = F.transpose(self.h_conv4_3_norm_mbox_conf,(0,2,3,1))
+        h_conv4_3_norm = self.normalize(kari)
+        h_conv4_3_norm_mbox_loc = self.conv4_3_norm_mbox_loc(h_conv4_3_norm)
+        h_conv4_3_norm_mbox_conf = self.conv4_3_norm_mbox_conf(h_conv4_3_norm)
+        h_conv4_3_norm_mbox_loc_perm = F.transpose(h_conv4_3_norm_mbox_loc,(0,2,3,1))
+        h_conv4_3_norm_mbox_conf_perm = F.transpose(h_conv4_3_norm_mbox_conf,(0,2,3,1))
 
-        self.h_conv4_3_norm_mbox_loc_flat = F.reshape(self.h_conv4_3_norm_mbox_loc_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 4))
-        self.h_conv4_3_norm_mbox_conf_flat = F.reshape(self.h_conv4_3_norm_mbox_conf_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 21))
+        self.h_conv4_3_norm_mbox_loc_flat = F.reshape(h_conv4_3_norm_mbox_loc_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 4))
+        self.h_conv4_3_norm_mbox_conf_flat = F.reshape(h_conv4_3_norm_mbox_conf_perm, (batchsize, self.c4_h, self.c4_w, self.c4_d, 21))
 
-        self.h_fc7_mbox_loc = self.fc7_mbox_loc(self.h_fc7)
-        self.h_fc7_mbox_conf = self.fc7_mbox_conf(self.h_fc7)
-        self.h_fc7_mbox_loc_perm = F.transpose(self.h_fc7_mbox_loc,(0,2,3,1))
-        self.h_fc7_mbox_conf_perm = F.transpose(self.h_fc7_mbox_conf,(0,2,3,1))
-        self.h_fc7_mbox_loc_flat = F.reshape(self.h_fc7_mbox_loc_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 4))
-        self.h_fc7_mbox_conf_flat = F.reshape(self.h_fc7_mbox_conf_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 21))
+        h_fc7_mbox_loc = self.fc7_mbox_loc(self.h_fc7)
+        h_fc7_mbox_conf = self.fc7_mbox_conf(self.h_fc7)
+        h_fc7_mbox_loc_perm = F.transpose(h_fc7_mbox_loc,(0,2,3,1))
+        h_fc7_mbox_conf_perm = F.transpose(h_fc7_mbox_conf,(0,2,3,1))
+        self.h_fc7_mbox_loc_flat = F.reshape(h_fc7_mbox_loc_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 4))
+        self.h_fc7_mbox_conf_flat = F.reshape(h_fc7_mbox_conf_perm, (batchsize, self.f7_h, self.f7_w, self.f7_d, 21))
 
         self.h_conv6_2_mbox_loc = self.conv6_2_mbox_loc(self.h_conv6_2)
         self.h_conv6_2_mbox_conf = self.conv6_2_mbox_conf(self.h_conv6_2)
@@ -197,9 +198,19 @@ class SSD (chainer.Chain):
         self.mbox_conf_reahpe = F.reshape(self.mbox_conf, (7308 * batchsize, 21))
         self.mbox_conf_softmax = F.softmax(self.mbox_conf_reahpe)
         self.mbox_conf_softmax_reahpe = F.reshape(self.mbox_conf, (batchsize, 7308, 21))
+
         if self.train:
-            self.loss = self.loss_func(h, t)
-            self.accuracy = self.loss
+            negative_index = (cuda.to_cpu(self.mbox_conf_softmax_reahpe.data) * conf_mask)[:, :, 0].argsort()[:, :20]
+            for i in range(batchsize):
+                conf_mask[i][negative_index[i, :30]] = 0
+                loc_mask[i][negative_index[i, :30]] = 0
+            t_conf_mask = chainer.Variable(cuda.cupy.array(conf_mask), volatile=x.volatile)
+            t_loc_mask = chainer.Variable(cuda.cupy.array(loc_mask), volatile=x.volatile)
+            self.train_conf = F.reshape(self.mbox_conf * t_conf_mask, (-1, 21))
+            self.val_conf = F.flatten(t_conf)
+            self.loss = F.softmax_cross_entropy(self.train_conf, self.val_conf)
+            self.loss += F.mean_squared_error(self.mbox_loc * t_loc_mask, t_loc)
+            self.accuracy = F.accuracy(self.train_conf, self.val_conf)
             return self.loss
 
     def prior(self, size, min_size, max_size, aspect, flip, clip, variance):

@@ -38,6 +38,7 @@ def make_data(year):
         for img_name in name_list:
             path = voc_path + "Annotations/{}.xml".format(img_name)
             size, obj =  convert_annotation(path)
+            path = voc_path + "JPEGImages/{}.jpg".format(img_name)
             data.append([path, size, obj])
         pickle.dump(data, open(f_name, "wb"))
 

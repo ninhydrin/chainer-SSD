@@ -1,19 +1,21 @@
 import time
 import datetime
 import sys
-
+import os
 
 class Logger:
     def __init__(self, f_name, res_q, args):
         self.f_name = f_name
         self.res_q = res_q
         self.args = args
+        if not os.path.isdir("log"):
+            os.mkdir("log")
 
     def out_log(self, log_str, write_type="a"):
         with open(self.f_name, write_type) as f:
             f.write(log_str)
 
-    def logger(self,):
+    def __call__(self):
         # Logger
         self.out_log("start train {}\n".format(
             datetime.datetime.now().isoformat()), "w")
