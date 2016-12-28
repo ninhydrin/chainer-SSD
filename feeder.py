@@ -7,37 +7,15 @@ from scipy.misc import imresize
 import matplotlib.pyplot as plt
 
 import bbox
+import ssd
 import batch_sampler
 
-data = pickle.load(open("test_voc2007.pkl", "rb"))
-#cropwidth = 256 - model.insize
-#voc = [path, (h, w), BBs]
-
-def read_image(model, path, size, BB, label, flip=False):
-    image = np.asarray(Image.open(path).convert("RGB"))
-    left, top, right, bottom = size
-    image = image[top:bottom, left:right, :].astype(np.float32)
-    h, w = image.shape[:2]
-    BB[:, (0, 2)] -= left
-    BB[:, (1, 3)] -= top
-    BB[:, (0, 2)] *= 300 / w
-    BB[:, (1, 3)] *= 300 / h
-    if flip and np.random.randint(2) == 3:
-        image[:, :, ::-1]
-        BB[:, 0], BB[:, 2] = w - BB[:, 2], right - BB[:, 0]
-    image = imresize(image, (300, 300), interp='bicubic')
-    loc_mask, conf_mask, loc_t, conf_t = model.make_sample(BB, label)
-    image = image.transpose(2, 0, 1).astype(np.float32)
-    return image, loc_mask, conf_mask, loc_t, conf_t
-
 class Reader:
-    def __init__(self, prior, mean, batch_sampler,  args, insize=300):
+    def __init__(self, prior, mean, insize=300):
         self.prior = prior
         self.insize = insize
         self.prior_num = self.prior.shape[0]
         self.mean = mean
-        self.args = args
-        self.sampler = Sampler(batch_sampler)
 
     def __call__(self, path, size, BB, label, flip=False):
         image = np.asarray(Image.open(path).convert("RGB"))
@@ -47,53 +25,39 @@ class Reader:
         image -= self.mean
         BB[:, (0, 2)] -= left
         BB[:, (1, 3)] -= top
-        BB[:, (0, 2)] *= self.insize / w
-        BB[:, (1, 3)] *= self.insize / h
+        if (BB< 0).any():
+            assert not (BB< 0).any()
+        BB[:, (0, 2)] /= w
+        BB[:, (1, 3)] /= h
         if flip and np.random.randint(2) == 3:
-            image[:, :, ::-1]
+            image = image[:, :, ::-1]
             BB[:, 0], BB[:, 2] = w - BB[:, 2], right - BB[:, 0]
         image = imresize(image, (self.insize, self.insize), interp='bicubic')
-        loc_mask, conf_mask, loc_t, conf_t = self.make_sample(BB, label)
+        loc_mask, conf_mask, loc, conf = self.make_sample(BB, label)
         image = image.transpose(2, 0, 1).astype(np.float32)
-        return image, loc_mask, conf_mask, loc_t, conf_t
+        return image, loc_mask, conf_mask, loc, conf
 
     def make_sample(self, BB, label):
-        loc_mask = np.zeros([self.prior_num, 4])
-        conf_mask = np.zeros([self.prior_num, 21])
-        overlap = bbox.bbox_overlaps2(self.prior[:, 0] * self.insize, BB)
-        positions = np.array(np.where(overlap > 0.5))
-        conf_mask[positions[0]] = 1
-        loc_mask[positions[0]] = 1
+        loc_mask = np.zeros([self.prior_num, 4], dtype=np.float32)
+        conf_mask = np.zeros([self.prior_num, 21], dtype=np.float32)
+        overlap = bbox.bbox_overlaps2(self.prior[:, 0], BB)
+        positions = np.array(np.where(overlap > 0.5))[0]
+        loc_mask[positions] = 1
+        conf_mask[positions] = 1
 
-        conf_t = overlap.argmax(1)
-        loc_t = np.zeros([self.prior_num, 4])
-        loc_t = np.array([self.encoder(BB[conf_t[i]] / self.insize, self.prior[i])
-                          if loc_mask[i][0] else [0, 0, 0, 0]
-                          for i in range(self.prior_num)])
-        conf_t = [label[conf_t[i]] for i in range(self.prior_num)]
-        conf_t *= conf_mask[:, 0]
-        conf_t += conf_mask[:, 0]
-        return [loc_mask, conf_mask, loc_t, conf_t]
-
-    def encoder(self, bbox, prior):
-        prior_bbox = prior[0]
-        prior_variance = prior[1]
-        encode_bbox = np.array([0] * 4, dtype=np.float32)
-        prior_width = prior_bbox[2] - prior_bbox[0]
-        prior_height = prior_bbox[3] - prior_bbox[1]
-        prior_center_x = (prior_bbox[0] + prior_bbox[2]) / 2.
-        prior_center_y = (prior_bbox[1] + prior_bbox[3]) / 2.
-        bbox_width = bbox[2] - bbox[0]
-        bbox_height = bbox[3] - bbox[1]
-        if bbox_width <= 0 or bbox_height <= 0:
-            return encode_bbox
-        bbox_center_x = (bbox[0] + bbox[2]) / 2.
-        bbox_center_y = (bbox[1] + bbox[3]) / 2.
-        encode_bbox[0] = (bbox_center_x - prior_center_x) / prior_width / prior_variance[0]
-        encode_bbox[1] = (bbox_center_y - prior_center_y) / prior_height / prior_variance[1]
-        encode_bbox[2] = np.log(bbox_width / prior_width) / prior_variance[2]
-        encode_bbox[3] = np.log(bbox_height / prior_height) / prior_variance[3]
-        return encode_bbox
+        which_class = overlap.argmax(1)
+        loc = np.zeros([self.prior_num, 4])
+        loc[positions] = BB[which_class[positions]]
+        conf = np.zeros([self.prior_num], dtype=np.int32)
+        conf[positions] = label[which_class[positions]]
+        loc = ssd.encoder(loc, self.prior)
+        loc[np.where(loc_mask == 0)[0]] = 0
+        if not np.all(conf.max()<21):
+            print(BB)
+            print(overlap.shape)
+            print("conf max = ",conf.max())
+            assert conf.max()<21
+        return [loc_mask, conf_mask, loc, conf]
 
 
 class Feeder:
@@ -108,7 +72,7 @@ class Feeder:
         self.data_q = data_q
         self.denominator = denominator
         self.sampler = Sampler(batch_sampler)
-        self.reader = Reader(prior, mean, batch_sampler, args)
+        self.reader = Reader(prior, mean)
 
     def __call__(self):
     # Data feeder
@@ -137,7 +101,6 @@ class Feeder:
         val_loc_mask = np.ndarray(
             (args.val_batchsize, self.prior_num, 4), dtype=np.float32)
 
-
         batch_pool = [None] * args.batchsize
         val_batch_pool = [None] * args.val_batchsize
         pool = multiprocessing.Pool(args.loaderjob)
@@ -147,7 +110,7 @@ class Feeder:
             perm = np.random.permutation(len(self.train_list))
             for idx in perm:
                 path, size, BB = self.train_list[idx]
-                label = BB[:, 1]
+                label = BB[:, 0]
                 BB = BB[:, 1:]
                 sample = self.sampler(size, BB)
                 for sample_size, sample_bbox in sample:
@@ -155,7 +118,6 @@ class Feeder:
                     i += 1
                     if i == args.batchsize:
                         for j, x in enumerate(batch_pool):
-                            #x_batch[j], y_batch[j] = x.get()
                             img_batch[j], loc_mask[j], conf_mask[j], loc_batch[j], conf_batch[j] = x.get()
                         self.data_q.put((img_batch.copy(), loc_mask.copy(),
                                          conf_mask.copy(), loc_batch.copy(), conf_batch.copy()))
@@ -166,17 +128,16 @@ class Feeder:
                         j = 0
                         for path, size, BB in self.val_list:
                             size = [0, 0, size[1], size[0]]
-                            label = BB[:, 1]
+                            label = BB[:, 0]
                             BB = BB[:, 1:]
-                            val_batch_pool[j] = pool.apply_async(self.read_image, (path, size, BB, label, False))
+                            val_batch_pool[j] = pool.apply_async(self.reader, (path, size, BB, label, False))
                             j += 1
                             if j == args.val_batchsize:
                                 for k, x in enumerate(val_batch_pool):
-                                    #val_x_batch[k], val_y_batch[k] = x.get()
-                                    pass
-                                #self.data_q.put((val_x_batch.copy(), val_y_batch.copy()))
+                                    val_img_batch[k], val_loc_mask[k], val_conf_mask[k], val_loc_batch[k], val_conf_batch[k] = x.get()
+                                self.data_q.put((val_img_batch.copy(), val_loc_mask.copy(),
+                                                 val_conf_mask.copy(), val_loc_batch.copy(), val_conf_batch.copy()))
                                 j = 0
-
                         self.data_q.put('train')
         pool.close()
         pool.join()
@@ -189,8 +150,8 @@ class Sampler:
                 for key in sampler["sampler"].keys():
                     setattr(self, key, sampler["sampler"][key])
             if sampler["sample_constraint"]:
-                for key in sampler["sampler"].keys():
-                    setattr(self, key, sampler["sampler"][key])
+                for key in sampler["sample_constraint"].keys():
+                    setattr(self, key, sampler["sample_constraint"][key])
             self.max_trial = sampler["max_trials"]
             self.max_sample = sampler["max_sample"]
 
@@ -221,10 +182,10 @@ class Sampler:
         return new_bboxes
 
     def fit_BB(self, src_bbox, BB):
-        BB[:, 0][np.where(BB[:,0] < src_bbox[0])] = src_bbox[0]
-        BB[:, 1][np.where(BB[:,1] < src_bbox[1])] = src_bbox[1]
-        BB[:, 2][np.where(BB[:,2] > src_bbox[2])] = src_bbox[2]
-        BB[:, 3][np.where(BB[:,3] > src_bbox[3])] = src_bbox[3]
+        BB[:, 0][np.where(BB[:,0] <= src_bbox[0])] = src_bbox[0]
+        BB[:, 1][np.where(BB[:,1] <= src_bbox[1])] = src_bbox[1]
+        BB[:, 2][np.where(BB[:,2] >= src_bbox[2])] = src_bbox[2]
+        BB[:, 3][np.where(BB[:,3] >= src_bbox[3])] = src_bbox[3]
         return BB
 
     def sample_bbox(self, sampler):
@@ -236,42 +197,25 @@ class Sampler:
         bbox_height = scale / np.sqrt(aspect_ratio)
         w_off = (1 - bbox_width) * np.random.random()
         h_off = (1 - bbox_height) * np.random.random()
+        #print(w_off, h_off, w_off + bbox_width, h_off + bbox_height)
         return (w_off, h_off, w_off + bbox_width, h_off + bbox_height)
 
     def locate_bbox(self, src_bbox, bbox):
-        loc_bbox = np.array([0]*4)
+        loc_bbox = np.array([0, 0, 0 ,0])
         src_width = src_bbox[2] - src_bbox[0]
         src_height = src_bbox[3] - src_bbox[1]
         loc_bbox[0] = src_bbox[0] + bbox[0] * src_width
         loc_bbox[1] = src_bbox[1] + bbox[1] * src_height
         loc_bbox[2] = src_bbox[0] + bbox[2] * src_width
         loc_bbox[3] = src_bbox[1] + bbox[3] * src_height;
+        assert loc_bbox[0] < loc_bbox[2]
+        assert loc_bbox[1] < loc_bbox[3]
         return loc_bbox
 
     def satisfy_constraint(self, sample_bbox, object_bboxes, sampler):
         jaccords = bbox.bbox_overlaps2(sample_bbox.astype(np.float), object_bboxes.astype(np.float))
-        if hasattr(sampler, "min_jaccard_overlap") and (jaccords < sampler.min_jaccard_overlap).sum():
+        if hasattr(sampler, "min_jaccard_overlap") and (jaccords < sampler.min_jaccard_overlap).any():
             return False
-        if hasattr(sampler, "max_jaccard_overlap") and (jaccords > sampler.max_jaccard_overlap).sum():
+        if hasattr(sampler, "max_jaccard_overlap") and (jaccords > sampler.max_jaccard_overlap).any():
             return False
         return True
-
-def test(image, BB):
-    image = image.transpose(1,2,0)
-    plt.imshow(image)
-    currentAxis = plt.gca()
-    colors = plt.cm.hsv(np.linspace(0, 1, 21)).tolist()
-    for i in BB:
-        x1, y1, x2, y2 = i
-        x1 = int(round(x1 * image.shape[1]))
-        x2 = int(round(x2 * image.shape[1]))
-        y1 = int(round(y1 * image.shape[0]))
-        y2 = int(round(y2 * image.shape[0]))
-        label_name = "a"
-        display_txt = '%s: %.2f' % (label_name, 0.1)
-        coords = (x1, y1), x2-x1+1, y2-y1+1
-        color = colors[1]
-        currentAxis.add_patch(plt.Rectangle(*coords, fill=False, edgecolor=color, linewidth=2))
-        currentAxis.text(x1, y1, display_txt, bbox={'facecolor': color, 'alpha': 0.5})
-    plt.show()
-

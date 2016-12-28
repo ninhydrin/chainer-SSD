@@ -55,9 +55,9 @@ class Logger:
                 duration = time.time() - begin_at
                 throughput = train_count * args.batchsize / duration
                 sys.stderr.write(
-                    '\rtrain {0} updates ({1} samples) time: {2} ({3:.4} fps) acc={4:.4} '
+                    '\rtrain {0} updates ({1} samples) time: {2} ({3:.4} fps) loss={4:.4} '
                     .format(train_count, train_count * args.batchsize,
-                            datetime.timedelta(seconds=duration), throughput,accuracy))
+                            datetime.timedelta(seconds=duration), throughput,loss))
 
                 train_cur_loss += loss
                 train_cur_accuracy += accuracy
@@ -76,9 +76,9 @@ class Logger:
                 duration = time.time() - val_begin_at
                 throughput = val_count / duration
                 sys.stderr.write(
-                    '\rval   {0} batches ({1} samples) time: {2} ({3:.4} images/sec) acc = {4:.4}'
+                    '\rval   {0} batches ({1} samples) time: {2} ({3:.4} images/sec) loss = {4:.4}'
                     .format(val_count / args.val_batchsize, val_count,
-                            datetime.timedelta(seconds=duration), throughput,accuracy))
+                            datetime.timedelta(seconds=duration), throughput, loss))
 
                 val_loss += loss
                 val_accuracy += accuracy

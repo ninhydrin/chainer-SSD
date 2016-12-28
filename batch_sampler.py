@@ -78,6 +78,7 @@ batch_sampler = [{
                      },
                      'sample_constraint': {
                          'max_jaccard_overlap': 1.0,
+                         'min_jaccard_overlap': 0.01,
                      },
                      'max_trials': 50,
                      'max_sample': 1,

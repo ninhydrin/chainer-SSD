@@ -49,6 +49,7 @@ parser.add_argument('--resume', default='',
 parser.add_argument('--log', default='log/ssd.log',
                     help='log file name')
 
+
 parser.set_defaults(test=False)
 args = parser.parse_args()
 
@@ -56,6 +57,7 @@ if not os.path.isdir("model"):
     os.mkdir("model")
 if not os.path.isdir("state"):
     os.mkdir("state")
+
 
 def model_resume():
     if args.initmodel:
@@ -77,13 +79,10 @@ def load_image_list(path, root):
         pair = line.strip().split()
         tuples.append((os.path.join(root, pair[0]), np.int32(pair[1])))
     return tuples
-
 #assert 50000 % args.val_batchsize == 0
 
-denominator = 100
+denominator = 10
 
-#train_list = load_image_list(args.train, args.tr)
-#val_list = load_image_list(args.val, args.vr)
 train_path = "trainval_voc{}.pkl".format(args.train)
 val_path = "test_voc{}.pkl".format(args.val)
 train_list = pickle.load(open(train_path, "rb")) 
@@ -92,7 +91,7 @@ val_list = pickle.load(open(val_path, "rb"))
 mean_image = np.load(args.mean) if args.mean else np.array([104, 117, 123])
 
 model = ssd_net.SSD()
-optimizer = optimizers.MomentumSGD(lr=0.0001, momentum=0.9)
+optimizer = optimizers.MomentumSGD(lr=0.00001, momentum=0.9)
 optimizer.setup(model)
 # optimizer.add_hook(chainer.optimizer.WeightDecay(0.01))
 
@@ -108,11 +107,13 @@ if args.gpu >= 0:
     cuda.check_cuda_available()
 xp = cuda.cupy if args.gpu >= 0 else np
 
+
 import feeder
 import logger
 import batch_sampler
 feed_data = feeder.Feeder(model.mbox_prior, train_list, val_list, mean_image, batch_sampler.batch_sampler, data_q, args)
 log_result = logger.Logger(args.log, res_q, args)
+
 
 class Trainer:
     def __init__(self, model, data_q, res_q, args):
@@ -149,13 +150,12 @@ class Trainer:
             if self.model.train:
                 optimizer.update(self.model, x, t_conf, t_loc, conf_mask, loc_mask)
             else:
-                self.model(x, t)
+                self.model(x, t_conf, t_loc, conf_mask, loc_mask)
 
             self.res_q.put(
                 (float(self.model.loss.data), float(self.model.accuracy.data)))
             del x, t_conf, t_loc
 
-# Invoke threads
 
 feeder = threading.Thread(target=feed_data)
 feeder.daemon = True

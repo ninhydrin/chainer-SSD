@@ -5,6 +5,12 @@ import chainer.functions as F
 from chainer import cuda
 import numpy as np
 
+import ssd
+import prior
+
+
+xp = cuda.cupy
+
 class SSD (chainer.Chain):
     insize = 300
 
@@ -73,12 +79,12 @@ class SSD (chainer.Chain):
         self.set_info("c8", 3, 3, 6)
         self.set_info("p6", 1, 1, 6)
 
-        self.conv4_3_norm_mbox_priorbox = self.prior((38, 38), 30., 0, [2], 1, 1, (0.1, 0.1, 0.2, 0.2))
-        self.fc7_mbox_priorbox = self.prior((19, 19), 60., 114., [2, 3], 1, 1, (0.1, 0.1, 0.2, 0.2))
-        self.conv6_2_mbox_priorbox = self.prior((10, 10), 114., 168., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
-        self.conv7_2_mbox_priorbox = self.prior((5, 5),168., 222., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
-        self.conv8_2_mbox_priorbox = self.prior((3, 3), 222., 276., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
-        self.pool6_mbox_priorbox = self.prior((1, 1), 276., 330., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+        self.conv4_3_norm_mbox_priorbox = prior.prior((38, 38), 30., 0, [2], 1, 1, (0.1, 0.1, 0.2, 0.2))
+        self.fc7_mbox_priorbox = prior.prior((19, 19), 60., 114., [2, 3], 1, 1, (0.1, 0.1, 0.2, 0.2))
+        self.conv6_2_mbox_priorbox = prior.prior((10, 10), 114., 168., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+        self.conv7_2_mbox_priorbox = prior.prior((5, 5),168., 222., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+        self.conv8_2_mbox_priorbox = prior.prior((3, 3), 222., 276., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
+        self.pool6_mbox_priorbox = prior.prior((1, 1), 276., 330., [2, 3], 1, 1,(0.1, 0.1, 0.2, 0.2))
         self.mbox_prior = np.concatenate([
             self.conv4_3_norm_mbox_priorbox.reshape(-1, 2, 4),
             self.fc7_mbox_priorbox.reshape(-1, 2, 4),
@@ -88,7 +94,7 @@ class SSD (chainer.Chain):
             self.pool6_mbox_priorbox.reshape(-1, 2, 4),
         ], axis=0)
 
-    def __call__(self, x, t_conf, t_loc, conf_mask, loc_mask):
+    def __call__(self, x, conf, loc, conf_mask, loc_mask):
         h = F.relu(self.conv1_1(x))
         h = F.max_pooling_2d(F.relu(self.conv1_2(h)), 2, 2)
         h = F.relu(self.conv2_1(h))
@@ -197,154 +203,33 @@ class SSD (chainer.Chain):
 
         self.mbox_conf_reahpe = F.reshape(self.mbox_conf, (7308 * batchsize, 21))
         self.mbox_conf_softmax = F.softmax(self.mbox_conf_reahpe)
-        self.mbox_conf_softmax_reahpe = F.reshape(self.mbox_conf, (batchsize, 7308, 21))
+        self.mbox_conf_softmax_reahpe = F.reshape(self.mbox_conf_softmax, (batchsize, 7308, 21))
 
         if self.train:
-            negative_index = (cuda.to_cpu(self.mbox_conf_softmax_reahpe.data) * conf_mask)[:, :, 0].argsort()[:, :20]
+            mbox_conf = cuda.to_cpu(self.mbox_conf_softmax_reahpe.data)
+            dammy_label = np.zeros([batchsize, 7308, 21])
             for i in range(batchsize):
-                conf_mask[i][negative_index[i, :30]] = 0
-                loc_mask[i][negative_index[i, :30]] = 0
+                self.conf_num = int(conf_mask[i].sum())
+                self.mask = conf_mask[i].copy()
+                negative_sample_num = int(conf_mask[i].sum() * 5) if  int(conf_mask[i].sum() * 5) < 4000 else 4000
+                self.num = negative_sample_num
+                negative_index = mbox_conf[i, :, 0].argsort()[: negative_sample_num]
+                self.ind = negative_index
+                self.conf_mask = conf_mask[i]
+                conf_mask[i, negative_index] = 1
+                dammy_label[i][np.where(conf_mask[i, :, 0] == 0)][0] = 100
             t_conf_mask = chainer.Variable(cuda.cupy.array(conf_mask), volatile=x.volatile)
             t_loc_mask = chainer.Variable(cuda.cupy.array(loc_mask), volatile=x.volatile)
-            self.train_conf = F.reshape(self.mbox_conf * t_conf_mask, (-1, 21))
-            self.val_conf = F.flatten(t_conf)
+            dammy_label = cuda.cupy.array(dammy_label)
+            self.t_conf_mask=t_conf_mask
+            train_conf = self.mbox_conf * t_conf_mask
+            train_conf.data += dammy_label
+            self.train_conf = F.reshape(train_conf, (-1, 21))
+            #train_conf = F.reshape(self.mbox_conf * t_conf_mask, (-1, 21))
+            #print(type(dammy_label), type(self.train_conf.data))
+
+            self.val_conf = F.flatten(conf)
             self.loss = F.softmax_cross_entropy(self.train_conf, self.val_conf)
-            self.loss += F.mean_squared_error(self.mbox_loc * t_loc_mask, t_loc)
+            self.loss += F.mean_squared_error(self.mbox_loc * t_loc_mask, loc)
             self.accuracy = F.accuracy(self.train_conf, self.val_conf)
             return self.loss
-
-    def prior(self, size, min_size, max_size, aspect, flip, clip, variance):
-        aspect_ratio = [1.]
-        for i in aspect:
-            aspect_ratio.append(i)
-            aspect_ratio.append(1/i)
-        height, width = size
-        img_width = img_height = 300.
-        step_x = img_width / float(width)
-        step_y = img_width / float(height)
-        top_data = np.zeros([height, width, (len(aspect_ratio) + bool(max_size)), 2, 4])
-
-        wid_hei_list = [(min_size, min_size)]
-        if max_size > 0:
-            #second prior: aspect_ratio = 1, size = sqrt(min_size * max_size)
-            wid_hei_list.append((np.sqrt(min_size * max_size), np.sqrt(min_size * max_size)))
-
-        for ar in aspect_ratio:
-            if abs(ar - 1.) < 1e-6:
-                continue
-            box_width = min_size * np.sqrt(ar)
-            box_height = min_size / np.sqrt(ar)
-            wid_hei_list.append((box_width, box_height))
-
-        for h in range(height):
-            for w in range(width):
-                center_x = (w + 0.5) * step_x
-                center_y = (h + 0.5) * step_y
-                for idx, w_h in enumerate(wid_hei_list):
-                    box_width, box_height = w_h
-                    top_data[h, w, idx, 0, 0] = (center_x - box_width / 2.) / img_width
-                    top_data[h, w, idx, 0, 1] = (center_y - box_height / 2.) / img_height
-                    top_data[h, w, idx, 0, 2] = (center_x + box_width / 2.) / img_width
-                    top_data[h, w, idx, 0, 3] = (center_y + box_height / 2.) / img_height
-        if clip:
-            top_data[np.where(top_data < 0)] = 0
-            top_data[np.where(top_data > 1)] = 1
-        top_data[:, :, :, 1] = variance
-        return top_data
-
-    def detection(self, idx, nms_th=0.45, cls_th=0.6):
-        prior = self.mbox_prior
-        loc = self.mbox_loc.data[idx]
-        conf = self.mbox_conf_softmax.data
-        cand = []
-        for label in range(1, 21):
-            label_cand = np.array([np.hstack([label, score, self.decoder(loc[pos], prior[pos])]) for pos, score in enumerate(conf[:, label]) if score > 0.1])
-            if label_cand.any():
-                k = self.nms(label_cand[:, 2:], label_cand[:, 1], 0.1, nms_th, 200)
-                for i in k:
-                    cand.append(label_cand[i])
-        cand = np.array(cand)
-        cand = cand[np.where(cand[:, 1] >= cls_th)]
-        return cand
-
-    def decoder(self, loc, prior):
-        prior_data = prior[1]
-        prior = prior[0]
-        bbox_data = np.array([0] * 4, dtype=np.float32)
-        p_xmin, p_ymin, p_xmax, p_ymax = prior
-        xmin, ymin, xmax, ymax = loc
-        prior_width = p_xmax - p_xmin
-        prior_height = p_ymax - p_ymin
-        prior_center_x = (p_xmin + p_xmax) / 2.
-        prior_center_y = (p_ymin + p_ymax) / 2.
-        decode_bbox_center_x = prior_data[0] * xmin * prior_width + prior_center_x;
-        decode_bbox_center_y = prior_data[1] * ymin * prior_height + prior_center_y;
-        decode_bbox_width = np.exp(prior_data[2] * xmax) * prior_width;
-        decode_bbox_height = np.exp(prior_data[3] * ymax) * prior_height;
-        bbox_data[0] = decode_bbox_center_x - decode_bbox_width / 2.
-        bbox_data[1] = decode_bbox_center_y - decode_bbox_height / 2.
-        bbox_data[2] = decode_bbox_center_x + decode_bbox_width / 2.
-        bbox_data[3] = decode_bbox_center_y + decode_bbox_height / 2.
-        return bbox_data
-
-    def encoder(self, prior_bbox, bbox, prior_variance):
-        encode_bbox = np.array([0]*4, dtype=np.float32)
-        prior_width = prior_bbox[2] - prior_bbox[0]
-        prior_height = prior_bbox[3] - prior_bbox[1]
-        prior_center_x = (prior_bbox[0] + prior_bbox[2]) / 2.
-        prior_center_y = (prior_bbox[1] + prior_bbox[3]) / 2.
-        bbox_width = bbox[2] - bbox[0]
-        bbox_height = bbox[3] - bbox[1]
-        if bbox_width <= 0 or bbox_height <= 0:
-            return encode_bbox
-        bbox_center_x = (bbox[0] + bbox[2]) / 2.
-        bbox_center_y = (bbox[1] + bbox[3]) / 2.
-        encode_bbox[0] = (bbox_center_x - prior_center_x) / prior_width / prior_variance[0]
-        encode_bbox[1] = (bbox_center_y - prior_center_y) / prior_height / prior_variance[1]
-        encode_bbox[2] = np.log(bbox_width / prior_width) / prior_variance[2]
-        encode_bbox[3] = np.log(bbox_height / prior_height) / prior_variance[3]
-
-        return encode_bbox
-
-    def nms(self, bboxes, scores, score_th, nms_th, top_k):
-        score_iter = 0
-        score_index = scores.argsort()[::-1][:top_k]
-        indices = []
-        while(score_iter < len(score_index)):
-            idx = score_index[score_iter]
-            keep = True
-            cand_bbox=bboxes[idx]
-            if cand_bbox[0] == cand_bbox[2] or cand_bbox[1] == cand_bbox[3]:
-                keep=False
-            for i in range(len(indices)):
-                if keep:
-                    kept_idx = indices[i]
-                    overlap = self.IoU(bboxes[idx], bboxes[kept_idx])
-                    keep = overlap <= nms_th
-                else:
-                    break
-            if keep:
-                indices.append(idx)
-            score_iter+=1
-        return indices
-
-    def IoU(self, a, b):
-        I = self.intersection(a, b)
-        if not I:
-            return 0
-        a_ = (a[2]-a[0])*(a[3]-a[1])
-        b_ = (b[2]-b[0])*(b[3]-b[1])
-        if a_ <=0 or b_ <= 0:
-            return 1
-        i = (I[2]-I[0])*(I[3]-I[1])
-        return i/(a_ + b_ - i*2)
-
-    def intersection(self, a,b):
-        x1 = max(a[0], b[0])
-        y1 = max(a[1], b[1])
-        x2 = min(a[2], b[2])
-        y2 = min(a[3], b[3])
-        w = x2 - x1
-        h = y2 - y1
-        if w<0 or h<0: return ()
-        return (x1, y1, x2, y2)

@@ -16,6 +16,16 @@ ext_modules = [
         ["bbox.pyx"],
         include_dirs=[numpy_include]
     ),
+    Extension(
+        "ssd",
+        ["ssd.pyx"],
+        include_dirs=[numpy_include]
+    ),
+    Extension(
+        "prior",
+        ["prior.pyx"],
+        include_dirs=[numpy_include]
+    ),
 ]
 setup(
     name='bbox',
