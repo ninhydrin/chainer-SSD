@@ -114,7 +114,7 @@ import batch_sampler
 feed_data = feeder.Feeder(model.mbox_prior, train_list, val_list, mean_image, batch_sampler.batch_sampler, data_q, args)
 log_result = logger.Logger(args.log, res_q, args)
 
-
+#sys.exit()
 class Trainer:
     def __init__(self, model, data_q, res_q, args):
         self.model = model
