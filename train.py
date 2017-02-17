@@ -114,7 +114,17 @@ import batch_sampler
 feed_data = feeder.Feeder(model.mbox_prior, train_list, val_list, mean_image, batch_sampler.batch_sampler, data_q, args)
 log_result = logger.Logger(args.log, res_q, args)
 
-#sys.exit()
+path, size, bb = train_list[0]
+l, bb = bb[:,0],bb[:,1:]
+s = feed_data.sampler(size, bb)
+size, bb = s[0]
+a = feed_data.reader(path, size, bb, l)
+k = chainer.Variable(a[0][np.newaxis, :])
+k.to_gpu()
+model.train = True
+model(k, [a[4]],[a[3]],[a[2]],[a[1]])
+sys.exit()
+
 class Trainer:
     def __init__(self, model, data_q, res_q, args):
         self.model = model

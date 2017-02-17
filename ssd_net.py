@@ -5,8 +5,8 @@ import chainer.functions as F
 from chainer import cuda
 import numpy as np
 
-import ssd
-import prior
+import util.ssd as ssd
+import util.prior as prior
 
 
 xp = cuda.cupy
@@ -207,17 +207,24 @@ class SSD (chainer.Chain):
 
         if self.train:
             mbox_conf = cuda.to_cpu(self.mbox_conf_softmax_reahpe.data)
-            dammy_label = np.zeros([batchsize, 7308, 21])
-            for i in range(batchsize):
-                self.conf_num = int(conf_mask[i].sum())
-                self.mask = conf_mask[i].copy()
-                negative_sample_num = int(conf_mask[i].sum() * 5) if  int(conf_mask[i].sum() * 5) < 4000 else 4000
+            mbox_loc = cuda.to_cpu(self.mbox_loc.data)
+            #dammy_label = np.zeros([batchsize, 7308, 21])
+            for batch_num in range(batchsize):
+                b_loc = mbox_loc[batch_num]
+                b_conf = mbox_conf[batch_num]
+                b_conf_mask = conf_mask[batch_num]
+                self.conf_num = int(b_conf_mask.sum())
+                self.mask = b_conf_mask.copy()
+                negative_sample_num = int(b_conf_mask.sum() * 5) if  int(b_conf_mask.sum() * 5) < 4000 else 4000
                 self.num = negative_sample_num
-                negative_index = mbox_conf[i, :, 0].argsort()[: negative_sample_num]
-                self.ind = negative_index
-                self.conf_mask = conf_mask[i]
-                conf_mask[i, negative_index] = 1
-                dammy_label[i][np.where(conf_mask[i, :, 0] == 0)][0] = 100
+                negative_index = b_conf[:, 0].argsort()[: negative_sample_num]
+                self.conf_mask = conf_mask[batch_num]
+                b_conf_mask[negative_index] = 1
+                self.no_learn =  chainer.Variable(conf_mask == 0)
+
+            return b_loc, b_conf, b_conf_mask
+                #dammy_label[i][np.where(conf_mask[i, :, 0] == 0)][0] = 100
+            return 0
             t_conf_mask = chainer.Variable(cuda.cupy.array(conf_mask), volatile=x.volatile)
             t_loc_mask = chainer.Variable(cuda.cupy.array(loc_mask), volatile=x.volatile)
             dammy_label = cuda.cupy.array(dammy_label)
